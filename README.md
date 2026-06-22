@@ -34,7 +34,7 @@ DIGIKEY_ACCOUNT_ID=...
 
 ## AIエージェント用スキル
 
-- Codex: `.agents/skills/digikey-parts/SKILL.md`
+- Codexリポジトリ用: `.agents/skills/digikey-parts/SKILL.md`
 - Claude Code: `.claude/skills/digikey-parts/SKILL.md`
 
 Codexでは `$digikey-parts`、Claude Codeでは `/digikey-parts` として呼び出せます。どちらも、このリポジトリのCLIを使ってDigi-Key検索、DB上のBOM編集、価格計算、ローカル部品DB更新を行うための薄い手順スキルです。
@@ -51,7 +51,8 @@ scripts/setup_external_use.sh
 このスクリプトは次を設定します。
 
 - `dktools` コマンドをPATH上の書き込み可能な場所に作成
-- Codex用スキルを `~/.agents/skills/digikey-parts` へsymlink
+- Codex用スキルを `~/.codex/skills/digikey-parts` へsymlink
+- リポジトリ/エージェント用エイリアスを `~/.agents/skills/digikey-parts` へsymlink
 - Claude Code用スキルを `~/.claude/skills/digikey-parts` へsymlink
 
 この環境では `/opt/homebrew/bin/dktools` として設定済みです。
@@ -59,7 +60,8 @@ scripts/setup_external_use.sh
 手動で設定する場合は次の通りです。
 
 ```bash
-mkdir -p ~/.agents/skills ~/.claude/skills
+mkdir -p ~/.codex/skills ~/.agents/skills ~/.claude/skills
+ln -s /Users/jinaoyagi/workspace/personal/digikey_search_tools/.agents/skills/digikey-parts ~/.codex/skills/digikey-parts
 ln -s /Users/jinaoyagi/workspace/personal/digikey_search_tools/.agents/skills/digikey-parts ~/.agents/skills/digikey-parts
 ln -s /Users/jinaoyagi/workspace/personal/digikey_search_tools/.claude/skills/digikey-parts ~/.claude/skills/digikey-parts
 ```
@@ -80,6 +82,14 @@ dktools bom price --pretty
 ```
 
 複数プロジェクトを1つのSQLite DBでまとめたい場合は、`config/digikey.json` の `paths.database` に絶対パスを指定してください。その場合もBOM明細は `project_name` ごとに分離されます。
+
+Codexで外部プロジェクトから使う場合は、対象プロジェクトのディレクトリでCodexを起動し、次のように依頼します。
+
+```text
+$digikey-parts を使って、このプロジェクトのBOMにTPS40210DGQRを追加して価格を確認してください。
+```
+
+スキルは `~/.codex/skills/digikey-parts` から読み込まれ、CLIは `dktools` を使って現在のディレクトリをプロジェクトとして扱います。
 
 設定ファイルと `.env` は既定ではこのリポジトリ直下のものを使います。外部プロジェクト専用の認証情報や地域設定を使う場合は、`--config` と `--env-file` を明示してください。
 

@@ -54,12 +54,14 @@ EOF
   mv "$tmp" "$wrapper"
 }
 
+link_skill "$REPO_ROOT/.agents/skills/$SKILL_NAME" "$HOME/.codex/skills/$SKILL_NAME"
 link_skill "$REPO_ROOT/.agents/skills/$SKILL_NAME" "$HOME/.agents/skills/$SKILL_NAME"
 link_skill "$REPO_ROOT/.claude/skills/$SKILL_NAME" "$HOME/.claude/skills/$SKILL_NAME"
 BIN_DIR=$(choose_bin_dir)
 write_wrapper "$BIN_DIR"
 
-echo "Configured Codex skill: $HOME/.agents/skills/$SKILL_NAME"
+echo "Configured Codex skill: $HOME/.codex/skills/$SKILL_NAME"
+echo "Configured repo/agent skill alias: $HOME/.agents/skills/$SKILL_NAME"
 echo "Configured Claude Code skill: $HOME/.claude/skills/$SKILL_NAME"
 echo "Configured dktools command: $BIN_DIR/dktools"
 if ! command -v dktools >/dev/null 2>&1; then
