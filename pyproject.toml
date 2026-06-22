@@ -1,0 +1,13 @@
+[project]
+name = "digikey-search-tools"
+version = "0.1.0"
+description = "Agent-friendly Digi-Key search, selection, BOM, and pricing tools."
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+
+[project.scripts]
+dktools = "digikey_tools.cli:main"
+
+[tool.unittest]
+start-dir = "tests"

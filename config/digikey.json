@@ -1,0 +1,19 @@
+{
+  "digikey": {
+    "environment": "production",
+    "site": "JP",
+    "language": "ja",
+    "currency": "JPY",
+    "account_id": null,
+    "cache_ttl_seconds": 86400,
+    "timeout_seconds": 30,
+    "max_retries": 3
+  },
+  "paths": {
+    "default_projects_dir": "projects",
+    "selection_criteria": "selection_criteria.md",
+    "bom": "bom/bom.csv",
+    "database": "data/digikey/parts.sqlite3",
+    "raw_dir": "data/digikey/raw"
+  }
+}
