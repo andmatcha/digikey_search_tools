@@ -61,6 +61,8 @@ digikey_search_tools/
 
 - `project init` でプロジェクト雛形を生成する。
 - `bom init/add/remove/update/export-digikey/price` を実装する。
+- BOMはSQLiteの `bom_projects` / `bom_items` を正とし、`project_name` ごとに明細を管理する。
+- `bom/bom.csv` はDigi-Keyアップロードや人間確認用のスナップショットとしてDBから生成する。
 - SQLite保存とraw JSON保存を実装する。
 - `store update/list/export` を実装する。
 
@@ -79,6 +81,7 @@ python3 -m digikey_tools project init projects/my_board
 python3 -m digikey_tools --project projects/my_board search part TPS40210DGQR --quantity 3 --pretty
 python3 -m digikey_tools --project projects/my_board search keyword "buck converter" --in-stock --rohs --has-datasheet --exclude-marketplace --limit 10 --pretty
 python3 -m digikey_tools --project projects/my_board bom add --reference U1 --quantity 1 --manufacturer-part TPS40210DGQR --notes "boost controller"
+python3 -m digikey_tools --project projects/my_board bom list --pretty
 python3 -m digikey_tools --project projects/my_board bom price --summary-md docs/price_summary.md --price-csv bom/price.csv
 python3 -m digikey_tools --project projects/my_board bom export-digikey --output bom/digikey_upload.csv
 python3 -m digikey_tools --project projects/my_board store update --from-bom
@@ -90,6 +93,8 @@ python3 -m digikey_tools --project projects/my_board store update --from-bom
 
 - `parts`: 正規化済み部品情報、Digi-Key品番、メーカー品番、メーカー、ステータス、在庫、最安候補、取得日時、raw JSONパス。
 - `queries`: 検索クエリ、検索種別、正規化結果、取得日時。
+- `bom_projects`: `project_name`、プロジェクトルート、作成・更新日時。
+- `bom_items`: `project_name` に紐づくBOM明細、LineId、位置、数量、品番、DNP、メモなど。
 
 検索やBOM価格計算のたびに `parts` をupsertし、`store update` では保存済み品番またはBOM上の品番を再取得する。
 
@@ -99,7 +104,8 @@ python3 -m digikey_tools --project projects/my_board store update --from-bom
 - JSON設定の既定値と上書きを検証する。
 - ProductDetails正規化で価格、ステータス、パラメータ、警告を抽出できることを検証する。
 - KeywordSearchリクエスト生成で検索オプションとフィルタを表現できることを検証する。
-- BOM CSVの追加、更新、削除、Digi-KeyアップロードCSV出力を検証する。
+- SQLite上のBOM追加、更新、削除、Digi-KeyアップロードCSV出力を検証する。
+- project_nameごとにBOM明細が分離されることを検証する。
 - 価格計算はDigi-Key APIをモックしたデータで検証する。
 - SQLite upsertと一覧取得を検証する。
 

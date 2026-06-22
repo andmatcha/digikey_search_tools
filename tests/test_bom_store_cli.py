@@ -6,13 +6,56 @@ import unittest
 from argparse import Namespace
 from pathlib import Path
 
-from digikey_tools.bom import add_line, export_digikey_upload, read_bom, remove_lines, update_lines
+from digikey_tools.bom import (
+    BomDatabase,
+    add_line,
+    export_digikey_upload,
+    read_bom,
+    remove_lines,
+    update_lines,
+)
 from digikey_tools.cli import build_keyword_filters
-from digikey_tools.project import write_empty_bom
+from digikey_tools.project import init_project, write_empty_bom
 from digikey_tools.store import PartStore
+from test_normalize import sample_config
 
 
 class BomStoreCliTest(unittest.TestCase):
+    def test_bom_database_keeps_rows_by_project_name_and_writes_csv_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project_a = init_project(root / "board_a", sample_config())
+            project_b = init_project(root / "board_b", sample_config())
+            db_path = root / "shared.sqlite3"
+            bom_db = BomDatabase(db_path)
+
+            added_a = bom_db.add_line(
+                project_a,
+                {
+                    "Reference Designator": "U1",
+                    "Quantity": "2",
+                    "Manufacturer Part Number": "TPS40210DGQR",
+                },
+            )
+            bom_db.add_line(
+                project_b,
+                {
+                    "Reference Designator": "U2",
+                    "Quantity": "1",
+                    "Manufacturer Part Number": "SN74HC595N",
+                },
+            )
+
+            lines_a = bom_db.list_lines(project_a)
+            lines_b = bom_db.list_lines(project_b)
+
+            self.assertEqual(len(lines_a), 1)
+            self.assertEqual(len(lines_b), 1)
+            self.assertEqual(lines_a[0].row["LineId"], added_a["added"]["LineId"])
+            self.assertEqual(lines_a[0].row["Manufacturer Part Number"], "TPS40210DGQR")
+            self.assertEqual(lines_b[0].row["Manufacturer Part Number"], "SN74HC595N")
+            self.assertEqual(read_bom(project_a.bom_path)[0].row["Manufacturer Part Number"], "TPS40210DGQR")
+
     def test_bom_add_update_remove_and_export(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             bom_path = Path(tmpdir) / "bom.csv"

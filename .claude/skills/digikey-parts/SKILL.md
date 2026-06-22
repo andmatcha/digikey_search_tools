@@ -1,6 +1,6 @@
 ---
 name: digikey-parts
-description: Use this skill when selecting electronic parts with Digi-Key, searching by part number or specs, checking status/stock/pricing, editing project BOM CSVs, exporting Digi-Key upload CSVs, refreshing the local part store, or calculating BOM cost with the local digikey_search_tools Python CLI. Trigger for Digi-Key, BOM, electronic component selection, part replacement, price estimation, availability checks, and project selection_criteria.md workflows in this repository.
+description: Use this skill when selecting electronic parts with Digi-Key, searching by part number or specs, checking status/stock/pricing, editing project-name keyed BOM records in SQLite, exporting Digi-Key upload CSVs, refreshing the local part store, or calculating BOM cost with the local digikey_search_tools Python CLI. Trigger for Digi-Key, BOM, electronic component selection, part replacement, price estimation, availability checks, and project selection_criteria.md workflows in this repository.
 ---
 
 # Digi-Key Parts Workflow
@@ -69,6 +69,18 @@ dktools bom add \
   --pretty
 ```
 
+List DB-managed BOM rows and confirm `LineId` values:
+
+```bash
+dktools bom list --pretty
+```
+
+List project names stored in the current BOM database:
+
+```bash
+dktools bom projects --pretty
+```
+
 Update or remove BOM rows by `LineId`:
 
 ```bash
@@ -116,6 +128,7 @@ dktools store update --from-bom --pretty
 - Use `product.best_offer.purchase_quantity` for cost reasoning because it reflects minimum order quantity.
 - Use `product.parameter_map` for spec checks, but verify against `selection_criteria.md` before final recommendation.
 - Use KeywordSearch for exploration, then ProductDetails through `search part` or `bom price` for final confirmation.
+- Treat SQLite `bom_items` keyed by `project_name` as the source of truth; treat `bom/bom.csv` as a generated snapshot.
 - Include the reason for a selected part in the BOM `Notes` or project docs.
 
 ## Validation

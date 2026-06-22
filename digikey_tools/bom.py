@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import sqlite3
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
@@ -12,7 +13,7 @@ from typing import Any, Iterable
 from .api import DigikeyClient
 from .config import AppConfig
 from .errors import BomError, ToolError
-from .normalize import normalize_product_details
+from .normalize import normalize_product_details, utc_now_iso
 from .project import BOM_COLUMNS, ProjectContext, write_empty_bom
 from .store import PartStore
 
@@ -25,6 +26,21 @@ DIGIKEY_UPLOAD_COLUMNS = [
     "Quantity",
     "Customer Reference",
 ]
+
+BOM_DB_FIELDS = {
+    "LineId": "line_id",
+    "Reference Designator": "reference_designator",
+    "Quantity": "quantity",
+    "Digi-Key Part Number": "digikey_part_number",
+    "Manufacturer": "manufacturer",
+    "Manufacturer Part Number": "manufacturer_part_number",
+    "Value": "value",
+    "Footprint": "footprint",
+    "Description": "description",
+    "Purpose": "purpose",
+    "DNP": "dnp",
+    "Notes": "notes",
+}
 
 
 @dataclass(frozen=True)
@@ -50,6 +66,287 @@ class BomLine:
     @property
     def dnp(self) -> bool:
         return str(self.row.get("DNP") or "").strip().lower() in {"1", "true", "yes", "y", "dnp"}
+
+
+class BomDatabase:
+    """SQLite-backed BOM store keyed by project_name."""
+
+    def __init__(self, db_path: Path) -> None:
+        self.db_path = db_path
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.db_path)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def _init_schema(self) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bom_projects (
+                    project_name TEXT PRIMARY KEY,
+                    project_root TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bom_items (
+                    project_name TEXT NOT NULL,
+                    line_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    reference_designator TEXT NOT NULL DEFAULT '',
+                    quantity INTEGER NOT NULL DEFAULT 1,
+                    digikey_part_number TEXT NOT NULL DEFAULT '',
+                    manufacturer TEXT NOT NULL DEFAULT '',
+                    manufacturer_part_number TEXT NOT NULL DEFAULT '',
+                    value TEXT NOT NULL DEFAULT '',
+                    footprint TEXT NOT NULL DEFAULT '',
+                    description TEXT NOT NULL DEFAULT '',
+                    purpose TEXT NOT NULL DEFAULT '',
+                    dnp INTEGER NOT NULL DEFAULT 0,
+                    notes TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (project_name, line_id),
+                    FOREIGN KEY (project_name)
+                        REFERENCES bom_projects(project_name)
+                        ON DELETE CASCADE
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_bom_items_project_position
+                ON bom_items(project_name, position, line_id)
+                """
+            )
+
+    def ensure_project(self, project: ProjectContext) -> None:
+        now = utc_now_iso()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO bom_projects (project_name, project_root, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(project_name) DO UPDATE SET
+                    project_root = excluded.project_root,
+                    updated_at = excluded.updated_at
+                """,
+                (project.project_name, str(project.root), now, now),
+            )
+
+    def import_csv_if_empty(self, project: ProjectContext) -> int:
+        self.ensure_project(project)
+        if self.count_lines(project.project_name) > 0 or not project.bom_path.exists():
+            return 0
+        lines = read_bom(project.bom_path)
+        imported = 0
+        for line in lines:
+            if not any(value.strip() for value in line.row.values()):
+                continue
+            self._insert_line(project, line.row, write_snapshot=False)
+            imported += 1
+        if imported:
+            self.write_csv_snapshot(project)
+        return imported
+
+    def count_lines(self, project_name: str) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM bom_items WHERE project_name = ?",
+                (project_name,),
+            ).fetchone()
+        return int(row["count"])
+
+    def list_lines(self, project: ProjectContext) -> list[BomLine]:
+        self.import_csv_if_empty(project)
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM bom_items
+                WHERE project_name = ?
+                ORDER BY position, line_id
+                """,
+                (project.project_name,),
+            ).fetchall()
+        return [
+            BomLine(index, db_row_to_bom_row(row))
+            for index, row in enumerate(rows, start=2)
+        ]
+
+    def add_line(self, project: ProjectContext, values: dict[str, str]) -> JsonDict:
+        self.import_csv_if_empty(project)
+        row = self._insert_line(project, values, write_snapshot=True)
+        return {"added": row, "rows": self.count_lines(project.project_name)}
+
+    def _insert_line(
+        self,
+        project: ProjectContext,
+        values: dict[str, str],
+        *,
+        write_snapshot: bool,
+    ) -> dict[str, str]:
+        self.ensure_project(project)
+        row = normalize_row({column: values.get(column, "") for column in BOM_COLUMNS})
+        row["LineId"] = row.get("LineId") or uuid.uuid4().hex[:12]
+        row["Quantity"] = str(parse_quantity(row.get("Quantity")))
+        now = utc_now_iso()
+        with self._connect() as connection:
+            position_row = connection.execute(
+                """
+                SELECT COALESCE(MAX(position), 0) + 1 AS next_position
+                FROM bom_items
+                WHERE project_name = ?
+                """,
+                (project.project_name,),
+            ).fetchone()
+            position = int(position_row["next_position"])
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO bom_items (
+                        project_name,
+                        line_id,
+                        position,
+                        reference_designator,
+                        quantity,
+                        digikey_part_number,
+                        manufacturer,
+                        manufacturer_part_number,
+                        value,
+                        footprint,
+                        description,
+                        purpose,
+                        dnp,
+                        notes,
+                        created_at,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    bom_row_to_db_values(project.project_name, row, position, now, now),
+                )
+            except sqlite3.IntegrityError as error:
+                raise BomError(f"BOM line already exists: {row['LineId']}") from error
+        if write_snapshot:
+            self.write_csv_snapshot(project)
+        return row
+
+    def remove_lines(self, project: ProjectContext, match: str) -> JsonDict:
+        self.import_csv_if_empty(project)
+        field, expected = parse_assignment(match)
+        db_field = BOM_DB_FIELDS[field]
+        if field == "DNP":
+            expected_value: object = 1 if is_dnp_text(expected) else 0
+        elif field == "Quantity":
+            expected_value = parse_quantity(expected)
+        else:
+            expected_value = expected
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT *
+                FROM bom_items
+                WHERE project_name = ? AND {db_field} = ?
+                ORDER BY position, line_id
+                """,
+                (project.project_name, expected_value),
+            ).fetchall()
+            if not rows:
+                raise BomError(f"no BOM rows matched {match}")
+            connection.execute(
+                f"DELETE FROM bom_items WHERE project_name = ? AND {db_field} = ?",
+                (project.project_name, expected_value),
+            )
+        self.write_csv_snapshot(project)
+        return {
+            "removed": [db_row_to_bom_row(row) for row in rows],
+            "rows": self.count_lines(project.project_name),
+        }
+
+    def update_lines(
+        self,
+        project: ProjectContext,
+        match: str,
+        assignments: list[str],
+    ) -> JsonDict:
+        self.import_csv_if_empty(project)
+        field, expected = parse_assignment(match)
+        match_db_field = BOM_DB_FIELDS[field]
+        if field == "DNP":
+            expected_value: object = 1 if is_dnp_text(expected) else 0
+        elif field == "Quantity":
+            expected_value = parse_quantity(expected)
+        else:
+            expected_value = expected
+        updates = dict(parse_assignment(item) for item in assignments)
+        for key in updates:
+            if key not in BOM_COLUMNS:
+                raise BomError(f"unknown BOM column: {key}")
+        set_parts = []
+        params: list[object] = []
+        for key, value in updates.items():
+            db_field = BOM_DB_FIELDS[key]
+            set_parts.append(f"{db_field} = ?")
+            if key == "DNP":
+                params.append(1 if is_dnp_text(value) else 0)
+            elif key == "Quantity":
+                params.append(parse_quantity(value))
+            else:
+                params.append(value)
+        set_parts.append("updated_at = ?")
+        params.append(utc_now_iso())
+        params.extend([project.project_name, expected_value])
+        with self._connect() as connection:
+            existing = connection.execute(
+                f"""
+                SELECT *
+                FROM bom_items
+                WHERE project_name = ? AND {match_db_field} = ?
+                ORDER BY position, line_id
+                """,
+                (project.project_name, expected_value),
+            ).fetchall()
+            if not existing:
+                raise BomError(f"no BOM rows matched {match}")
+            connection.execute(
+                f"""
+                UPDATE bom_items
+                SET {", ".join(set_parts)}
+                WHERE project_name = ? AND {match_db_field} = ?
+                """,
+                params,
+            )
+            changed = connection.execute(
+                f"""
+                SELECT *
+                FROM bom_items
+                WHERE project_name = ? AND {match_db_field} = ?
+                ORDER BY position, line_id
+                """,
+                (project.project_name, expected_value),
+            ).fetchall()
+        self.write_csv_snapshot(project)
+        return {
+            "updated": [db_row_to_bom_row(row) for row in changed],
+            "rows": self.count_lines(project.project_name),
+        }
+
+    def write_csv_snapshot(self, project: ProjectContext) -> None:
+        lines = self.list_lines(project)
+        write_bom(project.bom_path, [line.row for line in lines])
+
+    def project_names(self) -> list[str]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT project_name FROM bom_projects ORDER BY project_name"
+            ).fetchall()
+        return [str(row["project_name"]) for row in rows]
 
 
 def ensure_bom(path: Path) -> None:
@@ -129,6 +426,15 @@ def update_lines(path: Path, match: str, assignments: list[str]) -> JsonDict:
 
 def export_digikey_upload(path: Path, output: Path, *, include_dnp: bool = False) -> JsonDict:
     lines = read_bom(path)
+    return export_digikey_upload_lines(lines, output, include_dnp=include_dnp)
+
+
+def export_digikey_upload_lines(
+    lines: list[BomLine],
+    output: Path,
+    *,
+    include_dnp: bool = False,
+) -> JsonDict:
     output.parent.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, str]] = []
     for line in lines:
@@ -159,7 +465,29 @@ def price_bom(
     include_dnp: bool = False,
     include_raw: bool = False,
 ) -> JsonDict:
-    lines = read_bom(path)
+    return price_bom_lines(
+        read_bom(path),
+        input_label=str(path),
+        client=client,
+        config=config,
+        project=project,
+        store=store,
+        include_dnp=include_dnp,
+        include_raw=include_raw,
+    )
+
+
+def price_bom_lines(
+    lines: list[BomLine],
+    *,
+    input_label: str,
+    client: DigikeyClient,
+    config: AppConfig,
+    project: ProjectContext,
+    store: PartStore,
+    include_dnp: bool = False,
+    include_raw: bool = False,
+) -> JsonDict:
     line_items: list[JsonDict] = []
     ok_count = 0
     total = Decimal("0.00")
@@ -193,7 +521,7 @@ def price_bom(
                 query={
                     "product_number": line.product_number,
                     "requested_quantity": line.quantity,
-                    "source_csv": str(path),
+                    "source": input_label,
                     "line": line.line_number,
                 },
                 config=config,
@@ -228,7 +556,7 @@ def price_bom(
             "environment": config.environment,
         },
         "input": {
-            "csv_path": str(path),
+            "source": input_label,
             "rows": len(lines),
             "include_dnp": include_dnp,
         },
@@ -338,6 +666,50 @@ def normalize_row(row: dict[str, str | None]) -> dict[str, str]:
     return {column: str(row.get(column) or "") for column in BOM_COLUMNS}
 
 
+def db_row_to_bom_row(row: sqlite3.Row) -> dict[str, str]:
+    return {
+        "LineId": str(row["line_id"] or ""),
+        "Reference Designator": str(row["reference_designator"] or ""),
+        "Quantity": str(parse_quantity(str(row["quantity"]))),
+        "Digi-Key Part Number": str(row["digikey_part_number"] or ""),
+        "Manufacturer": str(row["manufacturer"] or ""),
+        "Manufacturer Part Number": str(row["manufacturer_part_number"] or ""),
+        "Value": str(row["value"] or ""),
+        "Footprint": str(row["footprint"] or ""),
+        "Description": str(row["description"] or ""),
+        "Purpose": str(row["purpose"] or ""),
+        "DNP": "yes" if bool(row["dnp"]) else "",
+        "Notes": str(row["notes"] or ""),
+    }
+
+
+def bom_row_to_db_values(
+    project_name: str,
+    row: dict[str, str],
+    position: int,
+    created_at: str,
+    updated_at: str,
+) -> tuple[object, ...]:
+    return (
+        project_name,
+        row["LineId"],
+        position,
+        row.get("Reference Designator", ""),
+        parse_quantity(row.get("Quantity")),
+        row.get("Digi-Key Part Number", ""),
+        row.get("Manufacturer", ""),
+        row.get("Manufacturer Part Number", ""),
+        row.get("Value", ""),
+        row.get("Footprint", ""),
+        row.get("Description", ""),
+        row.get("Purpose", ""),
+        1 if is_dnp_text(row.get("DNP", "")) else 0,
+        row.get("Notes", ""),
+        created_at,
+        updated_at,
+    )
+
+
 def parse_assignment(value: str) -> tuple[str, str]:
     if "=" not in value:
         raise BomError(f"assignment must be FIELD=VALUE: {value}")
@@ -346,6 +718,10 @@ def parse_assignment(value: str) -> tuple[str, str]:
     if field not in BOM_COLUMNS:
         raise BomError(f"unknown BOM column: {field}")
     return field, expected
+
+
+def is_dnp_text(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "dnp"}
 
 
 def parse_quantity(value: str | None) -> int:

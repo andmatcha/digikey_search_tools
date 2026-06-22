@@ -2,7 +2,7 @@
 
 ## 基本方針
 
-このツールは、プロジェクトごとの `selection_criteria.md` を読みながら、Digi-Keyの部品検索、候補比較、BOM管理、価格計算を行うためのCLIです。AIエージェントは、検索やBOM操作の前に必ず対象プロジェクトを決め、出力JSON内の `project.selection_criteria` を確認してください。
+このツールは、プロジェクトごとの `selection_criteria.md` を読みながら、Digi-Keyの部品検索、候補比較、BOM管理、価格計算を行うためのCLIです。BOMはSQLite内の `bom_projects` / `bom_items` に `project_name` ごとに保存され、`bom/bom.csv` は確認・アップロード用のスナップショットとして更新されます。AIエージェントは、検索やBOM操作の前に必ず対象プロジェクトを決め、出力JSON内の `project.selection_criteria` を確認してください。
 
 `.env` の中身は表示しないでください。認証情報はCLIが自動で読み込みます。
 
@@ -38,8 +38,8 @@ python3 -m digikey_tools project init projects/my_board --pretty
 作成される主なファイルは次の通りです。
 
 - `projects/my_board/selection_criteria.md`: 選定基準
-- `projects/my_board/bom/bom.csv`: ローカルBOM
-- `projects/my_board/data/digikey/parts.sqlite3`: ローカル部品DB
+- `projects/my_board/data/digikey/parts.sqlite3`: ローカル部品DBとプロジェクト別BOM DB
+- `projects/my_board/bom/bom.csv`: DBから出力されるBOMスナップショット
 - `projects/my_board/data/digikey/raw/`: 取得した生JSON
 - `projects/my_board/docs/`: 価格サマリなどの出力先
 
@@ -134,7 +134,17 @@ python3 -m digikey_tools --project projects/my_board bom add \
 
 ## BOMを更新・削除する
 
-`LineId` は `bom add` の出力または `bom/bom.csv` で確認します。
+BOMはSQLiteで管理されます。`LineId` は `bom add` の出力、`bom list`、または `bom/bom.csv` のスナップショットで確認します。
+
+```bash
+python3 -m digikey_tools --project projects/my_board bom list --pretty
+```
+
+同じDB内で管理されているプロジェクト名を確認する場合:
+
+```bash
+python3 -m digikey_tools --project projects/my_board bom projects --pretty
+```
 
 ```bash
 python3 -m digikey_tools --project projects/my_board bom update \
@@ -169,6 +179,7 @@ python3 -m digikey_tools --project projects/my_board bom price \
 - 梱包形態ごとの価格から最良候補を選択
 - 在庫、ステータス、Marketplace、EOL、NCNRなどの警告を出力
 - SQLiteとraw JSONに取得結果を保存
+- `project_name` に紐づくDB上のBOMを読み、`bom/bom.csv` をスナップショットとして更新
 
 ## Digi-Keyアップロード用CSVを作成する
 

@@ -29,6 +29,7 @@ BOM_COLUMNS = [
 @dataclass(frozen=True)
 class ProjectContext:
     root: Path
+    project_name: str
     selection_path: Path
     bom_path: Path
     database_path: Path
@@ -38,8 +39,10 @@ class ProjectContext:
 
     def metadata(self) -> dict[str, object]:
         return {
+            "project_name": self.project_name,
             "project_root": str(self.root),
             "bom_path": str(self.bom_path),
+            "bom_csv_path": str(self.bom_path),
             "database_path": str(self.database_path),
             "raw_dir": str(self.raw_dir),
             "selection_criteria": self.criteria.to_metadata(),
@@ -63,6 +66,7 @@ def resolve_project(path: str | Path | None, config: AppConfig, *, require: bool
     criteria = read_selection_criteria(selection_path)
     return ProjectContext(
         root=root,
+        project_name=root.name,
         selection_path=selection_path,
         bom_path=bom_path,
         database_path=database_path,

@@ -8,13 +8,10 @@ from typing import Any
 
 from .api import DigikeyClient
 from .bom import (
-    add_line,
-    export_digikey_upload,
-    price_bom,
+    BomDatabase,
+    export_digikey_upload_lines,
+    price_bom_lines,
     price_rows,
-    read_bom,
-    remove_lines,
-    update_lines,
     write_csv,
     write_price_summary,
 )
@@ -25,7 +22,7 @@ from .normalize import (
     normalize_keyword_response,
     normalize_product_details,
 )
-from .project import BOM_COLUMNS, init_project, resolve_project, write_empty_bom
+from .project import BOM_COLUMNS, init_project, resolve_project
 from .store import PartStore
 
 
@@ -139,6 +136,16 @@ def build_parser() -> argparse.ArgumentParser:
     bom_init.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
     bom_init.set_defaults(handler=handle_bom_init, requires_api=False)
 
+    bom_list = bom_sub.add_parser("list", help="List BOM rows from the project database.")
+    bom_list.add_argument("--project", default=argparse.SUPPRESS)
+    bom_list.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
+    bom_list.set_defaults(handler=handle_bom_list, requires_api=False)
+
+    bom_projects = bom_sub.add_parser("projects", help="List BOM project names in the database.")
+    bom_projects.add_argument("--project", default=argparse.SUPPRESS)
+    bom_projects.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
+    bom_projects.set_defaults(handler=handle_bom_projects, requires_api=False)
+
     bom_add = bom_sub.add_parser("add", help="Add one BOM row.")
     bom_add.add_argument("--project", default=argparse.SUPPRESS)
     bom_add.add_argument("--reference", default="")
@@ -234,6 +241,9 @@ def load_config_for_args(args: argparse.Namespace) -> AppConfig:
 
 def handle_project_init(args: argparse.Namespace, config: AppConfig) -> JsonDict:
     project = init_project(args.path, config, force=args.force)
+    bom_db = BomDatabase(project.database_path)
+    bom_db.ensure_project(project)
+    bom_db.import_csv_if_empty(project)
     return {
         "ok": True,
         "command": "project init",
@@ -345,8 +355,55 @@ def handle_search_keyword(args: argparse.Namespace, config: AppConfig) -> JsonDi
 
 def handle_bom_init(args: argparse.Namespace, config: AppConfig) -> JsonDict:
     project = resolve_project(args.project, config)
-    write_empty_bom(project.bom_path)
-    return {"ok": True, "project": project.metadata(), "bom": {"path": str(project.bom_path), "columns": BOM_COLUMNS}}
+    bom_db = BomDatabase(project.database_path)
+    bom_db.ensure_project(project)
+    imported = bom_db.import_csv_if_empty(project)
+    bom_db.write_csv_snapshot(project)
+    return {
+        "ok": True,
+        "project": project.metadata(),
+        "bom": {
+            "source": "sqlite",
+            "project_name": project.project_name,
+            "database": str(project.database_path),
+            "csv_snapshot": str(project.bom_path),
+            "columns": BOM_COLUMNS,
+            "imported_from_csv": imported,
+            "rows": len(bom_db.list_lines(project)),
+        },
+    }
+
+
+def handle_bom_list(args: argparse.Namespace, config: AppConfig) -> JsonDict:
+    project = resolve_project(args.project, config)
+    bom_db = BomDatabase(project.database_path)
+    lines = bom_db.list_lines(project)
+    bom_db.write_csv_snapshot(project)
+    return {
+        "ok": True,
+        "project": project.metadata(),
+        "bom": {
+            "source": "sqlite",
+            "project_name": project.project_name,
+            "rows": [line.row for line in lines],
+            "row_count": len(lines),
+            "csv_snapshot": str(project.bom_path),
+        },
+    }
+
+
+def handle_bom_projects(args: argparse.Namespace, config: AppConfig) -> JsonDict:
+    project = resolve_project(args.project, config)
+    bom_db = BomDatabase(project.database_path)
+    bom_db.ensure_project(project)
+    return {
+        "ok": True,
+        "project": project.metadata(),
+        "bom_projects": {
+            "database": str(project.database_path),
+            "project_names": bom_db.project_names(),
+        },
+    }
 
 
 def handle_bom_add(args: argparse.Namespace, config: AppConfig) -> JsonDict:
@@ -364,26 +421,29 @@ def handle_bom_add(args: argparse.Namespace, config: AppConfig) -> JsonDict:
         "DNP": "yes" if args.dnp else "",
         "Notes": args.notes,
     }
-    result = add_line(project.bom_path, values)
+    result = BomDatabase(project.database_path).add_line(project, values)
     return {"ok": True, "project": project.metadata(), "bom": result}
 
 
 def handle_bom_remove(args: argparse.Namespace, config: AppConfig) -> JsonDict:
     project = resolve_project(args.project, config)
-    result = remove_lines(project.bom_path, args.match)
+    result = BomDatabase(project.database_path).remove_lines(project, args.match)
     return {"ok": True, "project": project.metadata(), "bom": result}
 
 
 def handle_bom_update(args: argparse.Namespace, config: AppConfig) -> JsonDict:
     project = resolve_project(args.project, config)
-    result = update_lines(project.bom_path, args.match, args.sets)
+    result = BomDatabase(project.database_path).update_lines(project, args.match, args.sets)
     return {"ok": True, "project": project.metadata(), "bom": result}
 
 
 def handle_bom_export(args: argparse.Namespace, config: AppConfig) -> JsonDict:
     project = resolve_project(args.project, config)
     output = resolve_project_output(project.root, args.output)
-    result = export_digikey_upload(project.bom_path, output, include_dnp=args.include_dnp)
+    bom_db = BomDatabase(project.database_path)
+    lines = bom_db.list_lines(project)
+    bom_db.write_csv_snapshot(project)
+    result = export_digikey_upload_lines(lines, output, include_dnp=args.include_dnp)
     return {"ok": True, "project": project.metadata(), "digikey_upload": result}
 
 
@@ -391,8 +451,12 @@ def handle_bom_price(args: argparse.Namespace, config: AppConfig) -> JsonDict:
     project = resolve_project(args.project, config)
     client = DigikeyClient(config, cache_dir=project.raw_dir / "cache", refresh=args.refresh)
     store = PartStore(project.database_path, project.raw_dir)
-    result = price_bom(
-        project.bom_path,
+    bom_db = BomDatabase(project.database_path)
+    lines = bom_db.list_lines(project)
+    bom_db.write_csv_snapshot(project)
+    result = price_bom_lines(
+        lines,
+        input_label=f"sqlite:{project.database_path}#bom:{project.project_name}",
         client=client,
         config=config,
         project=project,
@@ -440,7 +504,8 @@ def handle_store_update(args: argparse.Namespace, config: AppConfig) -> JsonDict
     project = resolve_project(args.project, config)
     store = PartStore(project.database_path, project.raw_dir)
     if args.from_bom or not args.all:
-        product_numbers = [line.product_number for line in read_bom(project.bom_path) if line.product_number and not line.dnp]
+        lines = BomDatabase(project.database_path).list_lines(project)
+        product_numbers = [line.product_number for line in lines if line.product_number and not line.dnp]
     else:
         product_numbers = store.saved_product_numbers()
     client = DigikeyClient(config, cache_dir=project.raw_dir / "cache", refresh=args.refresh)
