@@ -180,6 +180,134 @@ python3 -m digikey_tools --project projects/my_board bom remove \
   --pretty
 ```
 
+## KiCad/EDAライブラリ評価を保存する
+
+BOM明細ごとに、KiCadの汎用シンボル、汎用フットプリント、汎用3Dモデルが使えるか、Digi-Key上にEDA/CAD/3Dモデルがあるか、SnapEDA、Ultra Librarian、メーカー公式、GitHub等からライブラリを入手できるかをSQLiteへ保存できます。評価は `project_name` と `LineId` に紐づくため、同じ型番でも用途や実装サイズが違う明細を別判断として扱えます。
+
+汎用KiCadライブラリで十分な抵抗の例:
+
+```bash
+python3 -m digikey_tools --project projects/my_board library assess \
+  --match LineId=abcd1234ef56 \
+  --kicad-symbol generic_ok \
+  --symbol-name Device:R \
+  --kicad-footprint generic_ok \
+  --footprint-name Resistor_SMD:R_0603_1608Metric \
+  --kicad-3d-model generic_ok \
+  --overall usable_with_generic \
+  --confidence high \
+  --notes "0603抵抗なのでKiCad標準の汎用資産で十分" \
+  --pretty
+```
+
+Digi-Keyや外部サービスからモデルを取得する必要があるICの例:
+
+```bash
+python3 -m digikey_tools --project projects/my_board library assess \
+  --match LineId=abcd1234ef56 \
+  --kicad-symbol needs_custom \
+  --kicad-footprint needs_custom \
+  --kicad-3d-model needs_custom \
+  --digikey-eda unknown \
+  --digikey-3d-model unknown \
+  --external-library available \
+  --source "SnapEDA=https://www.snapeda.com/parts/example" \
+  --overall needs_download \
+  --confidence medium \
+  --recommended-action "外部ライブラリを取得し、ピン番号と寸法をデータシートで照合する" \
+  --pretty
+```
+
+保存済みのDigi-Keyレスポンスから、EDA/CAD/3DモデルらしきURLを補助的に拾う場合:
+
+```bash
+python3 -m digikey_tools --project projects/my_board library assess \
+  --match LineId=abcd1234ef56 \
+  --detect-digikey-models \
+  --confidence low \
+  --notes "Digi-Key保存済みpayloadから自動抽出。最終確認は未実施" \
+  --pretty
+```
+
+この検出はネットワークを叩かず、`store fetch`、`search part`、`bom price` などで保存済みのSQLite/raw JSONだけを読みます。raw JSONが保存されていない部品では `unknown` のままになることがあります。
+
+評価状況の一覧:
+
+```bash
+python3 -m digikey_tools --project projects/my_board library list --pretty
+```
+
+未評価、未検証、要自作、要ダウンロードなど作業が残る明細だけを確認:
+
+```bash
+python3 -m digikey_tools --project projects/my_board library list --needs-action --pretty
+```
+
+主な状態値:
+
+- 個別資産: `unknown`, `generic_ok`, `available`, `not_found`, `needs_custom`, `not_required`, `risk`, `unverified`
+- 明細全体: `ready`, `usable_with_generic`, `needs_download`, `needs_custom`, `blocked`, `review`, `unknown`
+- 確度: `low`, `medium`, `high`, `unknown`
+
+## KiCadライブラリ方針を自動判定する
+
+抵抗、コンデンサ、インダクタ、ダイオードなどはKiCad標準の汎用シンボルと汎用フットプリントを優先します。ICや半導体などは、SOIC、TSSOP、QFNなどの汎用パッケージフットプリントを優先しつつ、シンボルは個別部品のピン番号、ピン名、電気タイプに合わせる扱いにします。
+
+```bash
+python3 -m digikey_tools --project projects/my_board library decide --all --pretty
+```
+
+ICのピン表がない場合、その行は `kicad_import_status=blocked` として保存されます。データシートからピン表CSVを作ると、プロジェクト用シンボル生成まで進められます。
+
+ピン表CSVの例:
+
+```csv
+LineId,PinNumber,PinName,PinType,Side
+abcd1234ef56,1,VIN,power_in,left
+abcd1234ef56,2,GND,power_in,left
+abcd1234ef56,3,SW,output,right
+abcd1234ef56,4,FB,input,right
+```
+
+`LineId` の代わりに `Reference Designator`、`Manufacturer Part Number`、`Digi-Key Part Number` でも紐づけできます。`PinType` は `input`、`output`、`bidirectional`、`passive`、`power_in`、`power_out`、`no_connect` などを使えます。
+
+ピン表を使って自動判定する場合:
+
+```bash
+python3 -m digikey_tools --project projects/my_board library decide \
+  --all \
+  --pin-map docs/pins.csv \
+  --overwrite \
+  --pretty
+```
+
+KiCad CLIがインストールされていれば、`library decide` は `kicad-cli version` と標準ライブラリ探索結果を根拠に含めます。KiCad CLIがない環境でも判定とファイル生成は継続します。探索を省略したい場合は `--no-kicad-env` を付けます。
+
+## KiCad取り込み用ファイルを一括生成する
+
+現在のBOMと `eda_library_assessments` から、KiCad取り込み用のファイル群を生成します。
+
+```bash
+python3 -m digikey_tools --project projects/my_board library export-kicad \
+  --kicad-project /path/to/kicad_project \
+  --output-dir kicad_import \
+  --pin-map docs/pins.csv \
+  --apply \
+  --pretty
+```
+
+出力される主なファイル:
+
+- `dktools_import_plan.json`: BOM行ごとのシンボル、フットプリント、ピン方針、取り込み可否
+- `dktools_symbol_fields.csv`: KiCadのシンボルフィールド更新に使うCSV
+- `dktools_footprint_assignments.csv`: Reference Designatorごとのフットプリント割当CSV
+- `dktools_generated.kicad_sym`: ピン表CSVから生成したプロジェクト用シンボルライブラリ
+- `dktools_library_report.md`: ブロック中の明細と推奨アクション
+
+`--apply` を付けると、KiCadプロジェクトの `sym-lib-table` に生成シンボルライブラリを登録します。既存の `.kicad_sch` や `.kicad_pcb` は直接書き換えません。回路図に配置済みのシンボルへフィールドを反映する場合は、生成されたCSVをKiCad側のシンボルフィールド表で取り込むか、次段のKiCad連携処理でReference Designatorをキーに反映します。
+
+将来KiCadプロジェクトと照合するときは、BOMの `Reference Designator`、`Footprint`、`LineId` をキーに、`.kicad_sch`、`.kicad_pcb`、ライブラリテーブル側の実体確認へ進めます。
+
 ## BOMの価格を計算する
 
 ```bash

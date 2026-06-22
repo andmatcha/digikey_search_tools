@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
+from unittest.mock import patch
 
 from digikey_tools.bom import (
     BomDatabase,
@@ -16,6 +17,13 @@ from digikey_tools.bom import (
     update_lines,
 )
 from digikey_tools.cli import build_keyword_filters
+from digikey_tools.kicad import (
+    PinDefinition,
+    decide_line_library,
+    export_kicad_import_bundle,
+    find_kicad_cli,
+)
+from digikey_tools.library import LibraryDatabase, digikey_model_hints_for_line
 from digikey_tools.project import init_project, write_empty_bom
 from digikey_tools.store import PartStore
 from test_normalize import sample_config
@@ -197,6 +205,204 @@ class BomStoreCliTest(unittest.TestCase):
         self.assertIn("rohs_status", columns)
         self.assertIn("best_offer_json", columns)
         self.assertIn("datasheet_url", columns)
+
+    def test_library_assessment_keeps_eda_readiness_by_bom_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project = init_project(root / "board", sample_config())
+            bom_db = BomDatabase(project.database_path)
+            bom_db.add_line(
+                project,
+                {
+                    "Reference Designator": "R1",
+                    "Quantity": "1",
+                    "Manufacturer Part Number": "RC0603FR-0710KL",
+                    "Value": "10k",
+                    "Footprint": "Resistor_SMD:R_0603_1608Metric",
+                },
+            )
+            line = bom_db.list_lines(project)[0]
+
+            assessment = LibraryDatabase(project.database_path).upsert_assessment(
+                project,
+                line,
+                {
+                    "kicad_symbol_status": "generic_ok",
+                    "kicad_symbol_name": "Device:R",
+                    "kicad_footprint_status": "generic_ok",
+                    "kicad_3d_model_status": "generic_ok",
+                    "external_library_status": "not_required",
+                    "overall_status": "usable_with_generic",
+                    "confidence": "high",
+                    "notes": "0603 resistor can use generic KiCad assets.",
+                },
+                evidence={
+                    "external_sources": [
+                        {"provider": "KiCad official library", "url": "https://gitlab.com/kicad/libraries"}
+                    ]
+                },
+            )
+            rows = LibraryDatabase(project.database_path).list_project(project, [line])
+
+        self.assertEqual(assessment["reference_designator"], "R1")
+        self.assertEqual(assessment["kicad_symbol_name"], "Device:R")
+        self.assertEqual(assessment["kicad_footprint_name"], "Resistor_SMD:R_0603_1608Metric")
+        self.assertEqual(assessment["external_library_provider"], "KiCad official library")
+        self.assertFalse(rows[0]["needs_action"])
+
+    def test_library_digikey_model_hints_reads_saved_raw_payload(self) -> None:
+        normalized = {
+            "ok": True,
+            "fetched_at": "2026-06-22T00:00:00Z",
+            "source": {"currency": "JPY"},
+            "product": {
+                "manufacturer": {"name": "Example"},
+                "manufacturer_part_number": "EXAMPLE-IC",
+                "description": "Example IC",
+                "status": "Active",
+                "availability": {"active": True, "immediate": True},
+                "quantity_available": 10,
+                "variations": [
+                    {
+                        "digikey_product_number": "123-EXAMPLE-ND",
+                        "marketplace": False,
+                    }
+                ],
+                "best_offer": {
+                    "digikey_product_number": "123-EXAMPLE-ND",
+                    "unit_price": 100.0,
+                    "estimated_total_price": 100.0,
+                    "purchase_quantity": 1,
+                    "package_type": "Cut Tape",
+                    "in_stock_enough": True,
+                    "quantity_available": 10,
+                },
+            },
+            "warnings": [],
+        }
+        raw = {
+            "Product": {
+                "ManufacturerProductNumber": "EXAMPLE-IC",
+                "EDAUrl": "https://example.com/example-ic-eda.zip",
+                "Product3DModelUrl": "https://example.com/example-ic.step",
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project = init_project(root / "board", sample_config())
+            bom_db = BomDatabase(project.database_path)
+            bom_db.add_line(
+                project,
+                {
+                    "Reference Designator": "U1",
+                    "Quantity": "1",
+                    "Digi-Key Part Number": "123-EXAMPLE-ND",
+                    "Manufacturer Part Number": "EXAMPLE-IC",
+                },
+            )
+            line = bom_db.list_lines(project)[0]
+            store = PartStore(project.database_path, project.raw_dir)
+            store.upsert_product(normalized, raw)
+
+            hints = digikey_model_hints_for_line(store, line)
+
+        self.assertTrue(hints["part_found"])
+        self.assertEqual(hints["digikey_eda_status"], "available")
+        self.assertEqual(hints["digikey_3d_model_status"], "available")
+        self.assertEqual(hints["digikey_3d_model_url"], "https://example.com/example-ic.step")
+
+    def test_kicad_decision_prefers_generic_passives_and_requires_ic_pin_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project = init_project(root / "board", sample_config())
+            bom_db = BomDatabase(project.database_path)
+            bom_db.add_line(
+                project,
+                {
+                    "Reference Designator": "R1",
+                    "Quantity": "1",
+                    "Manufacturer Part Number": "RC0603FR-0710KL",
+                    "Value": "10k",
+                    "Footprint": "Resistor_SMD:R_0603_1608Metric",
+                },
+            )
+            bom_db.add_line(
+                project,
+                {
+                    "Reference Designator": "U1",
+                    "Quantity": "1",
+                    "Manufacturer Part Number": "EXAMPLE-IC",
+                    "Footprint": "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
+                },
+            )
+            resistor, ic = bom_db.list_lines(project)
+
+        resistor_decision = decide_line_library(resistor)
+        ic_decision = decide_line_library(ic)
+        self.assertEqual(resistor_decision["updates"]["kicad_symbol_name"], "Device:R")
+        self.assertEqual(resistor_decision["updates"]["symbol_policy"], "kicad_generic_preferred")
+        self.assertEqual(resistor_decision["updates"]["overall_status"], "usable_with_generic")
+        self.assertEqual(ic_decision["updates"]["kicad_symbol_status"], "needs_custom")
+        self.assertEqual(ic_decision["updates"]["kicad_footprint_status"], "generic_ok")
+        self.assertEqual(ic_decision["updates"]["pin_policy"], "specific_pin_identity_required")
+        self.assertEqual(ic_decision["updates"]["kicad_import_status"], "blocked")
+
+    def test_kicad_export_bundle_writes_generated_symbol_and_project_table(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            project = init_project(root / "board", sample_config())
+            bom_db = BomDatabase(project.database_path)
+            bom_db.add_line(
+                project,
+                {
+                    "Reference Designator": "U1",
+                    "Quantity": "1",
+                    "Manufacturer Part Number": "EXAMPLE-IC",
+                    "Value": "EXAMPLE-IC",
+                    "Footprint": "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
+                },
+            )
+            line = bom_db.list_lines(project)[0]
+            pin_map = {
+                line.line_id: [
+                    PinDefinition("1", "VIN", "power_in", "left"),
+                    PinDefinition("2", "GND", "power_in", "left"),
+                    PinDefinition("3", "SW", "output", "right"),
+                    PinDefinition("4", "FB", "input", "right"),
+                ]
+            }
+            library_db = LibraryDatabase(project.database_path)
+            decision = decide_line_library(line, pin_map=pin_map)
+            library_db.upsert_assessment(project, line, decision["updates"], evidence=decision["evidence"])
+            output = export_kicad_import_bundle(
+                project,
+                [line],
+                library_db=library_db,
+                output_dir=project.root / "kicad_import",
+                kicad_project_dir=project.root,
+                pin_map=pin_map,
+                library_nickname="dktools_generated",
+                apply_to_project=True,
+            )
+
+            symbol_text = Path(output["generated_symbol_library"]).read_text(encoding="utf-8")
+            with Path(output["symbol_fields_csv"]).open("r", encoding="utf-8", newline="") as handle:
+                fields_rows = list(csv.DictReader(handle))
+            table_text = (project.root / "sym-lib-table").read_text(encoding="utf-8")
+
+        self.assertIn('symbol "DKTOOLS_EXAMPLE_IC"', symbol_text)
+        self.assertIn('name "VIN"', symbol_text)
+        self.assertEqual(fields_rows[0]["Import Status"], "ready")
+        self.assertEqual(fields_rows[0]["Symbol"], "dktools_generated:DKTOOLS_EXAMPLE_IC")
+        self.assertIn('name "dktools_generated"', table_text)
+
+    def test_kicad_cli_fallback_finds_app_bundle_binary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cli_path = Path(tmpdir) / "kicad-cli"
+            cli_path.write_text("#!/bin/sh\n", encoding="utf-8")
+            with patch("digikey_tools.kicad.shutil.which", return_value=None):
+                detected = find_kicad_cli([cli_path])
+        self.assertEqual(detected, str(cli_path))
 
     def test_keyword_filter_builder_maps_common_options(self) -> None:
         args = Namespace(

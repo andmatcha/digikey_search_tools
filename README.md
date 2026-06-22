@@ -1,6 +1,6 @@
 # digikey_search_tools
 
-AIエージェントが使いやすいDigi-Key部品検索、部品選定、BOM管理、価格計算ツール群です。Python標準ライブラリ中心で実装しており、任意の `selection_criteria.md` とSQLiteデータベースでBOMを管理します。`selection_criteria.md` がない外部プロジェクトでも、AIエージェントに要件を伝えて選定できます。`bom/bom.csv` はDigi-Key連携や確認用のスナップショットとして出力されます。
+AIエージェントが使いやすいDigi-Key部品検索、部品選定、BOM管理、価格計算ツール群です。Python標準ライブラリ中心で実装しており、任意の `selection_criteria.md` とSQLiteデータベースでBOMを管理します。`selection_criteria.md` がない外部プロジェクトでも、AIエージェントに要件を伝えて選定できます。`bom/bom.csv` はDigi-Key連携や確認用のスナップショットとして出力されます。BOM明細ごとにKiCad/EDAライブラリ評価も保存でき、汎用シンボル・フットプリント・3Dモデルで足りるか、Digi-Keyや外部サービスからモデルを入手できるかを後続作業へ引き継げます。
 
 ## 1. API設定
 
@@ -101,6 +101,10 @@ dktools store datasheet TPS40210DGQR --pretty
 dktools bom add --reference U1 --quantity 1 --manufacturer-part TPS40210DGQR --pretty
 dktools bom list --pretty
 dktools bom projects --pretty
+dktools library assess --match LineId=<line-id> --kicad-symbol generic_ok --kicad-footprint generic_ok --overall usable_with_generic --confidence high --pretty
+dktools library decide --all --pin-map docs/pins.csv --pretty
+dktools library list --needs-action --pretty
+dktools library export-kicad --kicad-project . --pin-map docs/pins.csv --apply --pretty
 dktools bom price --pretty
 ```
 
@@ -122,6 +126,10 @@ python3 -m digikey_tools --project projects/my_board bom list --pretty
 python3 -m digikey_tools --project projects/my_board bom projects --pretty
 python3 -m digikey_tools --project projects/my_board bom price --pretty
 python3 -m digikey_tools --project projects/my_board bom export-digikey --output bom/digikey_upload.csv --pretty
+python3 -m digikey_tools --project projects/my_board library assess --match LineId=<line-id> --detect-digikey-models --pretty
+python3 -m digikey_tools --project projects/my_board library decide --all --pin-map docs/pins.csv --pretty
+python3 -m digikey_tools --project projects/my_board library list --needs-action --pretty
+python3 -m digikey_tools --project projects/my_board library export-kicad --kicad-project . --pin-map docs/pins.csv --apply --pretty
 ```
 
 保存済み部品のデータシートをブラウザで開く、またはPDFとして保存する場合:

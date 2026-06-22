@@ -30,6 +30,10 @@ class StoreError(ToolError):
     """Raised when local storage cannot be updated."""
 
 
+class LibraryError(ToolError):
+    """Raised when EDA library assessment storage cannot be updated."""
+
+
 class DigikeyApiError(ToolError):
     """Raised when Digi-Key returns an HTTP or payload error."""
 

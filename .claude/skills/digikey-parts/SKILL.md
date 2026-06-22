@@ -130,6 +130,54 @@ dktools bom export-digikey \
   --pretty
 ```
 
+Record KiCad/EDA library readiness for a BOM line:
+
+```bash
+dktools library assess \
+  --match LineId=<line-id> \
+  --kicad-symbol generic_ok \
+  --symbol-name Device:R \
+  --kicad-footprint generic_ok \
+  --footprint-name Resistor_SMD:R_0603_1608Metric \
+  --kicad-3d-model generic_ok \
+  --overall usable_with_generic \
+  --confidence high \
+  --pretty
+```
+
+Use saved Digi-Key payloads to seed Digi-Key EDA/3D model hints without calling the API:
+
+```bash
+dktools library assess \
+  --match LineId=<line-id> \
+  --detect-digikey-models \
+  --confidence low \
+  --notes "Auto-detected from saved Digi-Key payload; not yet verified." \
+  --pretty
+```
+
+List unresolved KiCad/EDA library work for BOM rows:
+
+```bash
+dktools library list --needs-action --pretty
+```
+
+Decide KiCad library handling for all BOM rows. Generic KiCad libraries are preferred for passives, while IC symbols require part-specific pin names and pin numbers:
+
+```bash
+dktools library decide --all --pin-map docs/pins.csv --pretty
+```
+
+Export a KiCad import bundle. This writes JSON/CSV outputs plus generated project symbols from the pin map; `--apply` registers the generated symbol library in `sym-lib-table` without editing `.kicad_sch` or `.kicad_pcb`:
+
+```bash
+dktools library export-kicad \
+  --kicad-project . \
+  --pin-map docs/pins.csv \
+  --apply \
+  --pretty
+```
+
 Refresh local stored part data:
 
 ```bash
@@ -146,6 +194,11 @@ dktools store update <part-number> --refresh --pretty
 - Use KeywordSearch for exploration, then ProductDetails through `search part` or `bom price` for final confirmation.
 - Treat SQLite `bom_items` keyed by `project_name` as the source of truth; treat `bom/bom.csv` as a generated snapshot.
 - Treat SQLite `parts` columns as the quick local index for status, price, stock, compliance, and datasheet URLs; refresh with `store fetch` or `store update` before final decisions.
+- Treat SQLite `eda_library_assessments` as the source of truth for KiCad/EDA symbol, footprint, 3D model, Digi-Key model, and external-library readiness for each BOM `LineId`.
+- Store library decisions at BOM-line granularity, not only by part number, because the same part number can need different footprints or verification in different contexts.
+- Prefer KiCad built-in generic symbols and footprints for resistors, capacitors, inductors, diodes, ferrite beads, fuses, and test points.
+- For ICs and semiconductors, prefer generic KiCad package footprints when suitable, but require part-specific symbol pin numbers, pin names, and pin electrical types. Use a pin-map CSV before exporting generated symbols.
+- Use `library list --needs-action` before KiCad work to find unassessed, unverified, download-needed, or custom-library-needed BOM rows.
 - Include the reason for a selected part in the BOM `Notes` or project docs.
 
 ## Validation

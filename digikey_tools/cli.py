@@ -13,13 +13,32 @@ from .api import DigikeyClient
 from .bom import (
     BomDatabase,
     export_digikey_upload_lines,
+    parse_assignment,
     price_bom_lines,
     price_rows,
     write_csv,
     write_price_summary,
 )
 from .config import DEFAULT_CONFIG_PATH, DEFAULT_ENV_PATH, AppConfig, load_app_config
-from .errors import ToolError, error_to_json
+from .errors import BomError, ToolError, error_to_json
+from .kicad import (
+    decide_line_library,
+    detect_kicad_environment,
+    export_kicad_import_bundle,
+    load_pin_map,
+    merge_decision_updates,
+)
+from .library import (
+    ASSET_STATUSES,
+    CONFIDENCE_LEVELS,
+    FOOTPRINT_POLICIES,
+    IMPORT_STATUSES,
+    OVERALL_STATUSES,
+    PIN_POLICIES,
+    SYMBOL_POLICIES,
+    LibraryDatabase,
+    digikey_model_hints_for_line,
+)
 from .normalize import (
     filter_products,
     normalize_keyword_response,
@@ -246,6 +265,92 @@ def build_parser() -> argparse.ArgumentParser:
     store_update.add_argument("--refresh", action="store_true")
     store_update.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
     store_update.set_defaults(handler=handle_store_update, requires_api=True)
+
+    library_parser = subparsers.add_parser(
+        "library",
+        help="Record KiCad/EDA symbol, footprint, and 3D model readiness for BOM rows.",
+    )
+    library_sub = library_parser.add_subparsers(dest="library_command", required=True)
+
+    library_assess = library_sub.add_parser(
+        "assess",
+        help="Create or update EDA library readiness records for BOM rows.",
+    )
+    target = library_assess.add_mutually_exclusive_group(required=True)
+    target.add_argument("--match", help="BOM selector as FIELD=VALUE, e.g. LineId=abc123.")
+    target.add_argument("--all", action="store_true", help="Assess every BOM row.")
+    library_assess.add_argument("--project", default=argparse.SUPPRESS)
+    library_assess.add_argument("--kicad-symbol", dest="kicad_symbol_status", choices=ASSET_STATUSES)
+    library_assess.add_argument("--symbol-name")
+    library_assess.add_argument("--kicad-footprint", dest="kicad_footprint_status", choices=ASSET_STATUSES)
+    library_assess.add_argument("--footprint-name")
+    library_assess.add_argument("--kicad-3d-model", dest="kicad_3d_model_status", choices=ASSET_STATUSES)
+    library_assess.add_argument("--kicad-3d-model-path")
+    library_assess.add_argument("--digikey-eda", dest="digikey_eda_status", choices=ASSET_STATUSES)
+    library_assess.add_argument("--digikey-eda-url")
+    library_assess.add_argument("--digikey-3d-model", dest="digikey_3d_model_status", choices=ASSET_STATUSES)
+    library_assess.add_argument("--digikey-3d-model-url")
+    library_assess.add_argument("--external-library", dest="external_library_status", choices=ASSET_STATUSES)
+    library_assess.add_argument("--external-provider")
+    library_assess.add_argument("--external-url")
+    library_assess.add_argument("--source", action="append", default=[], help="External source as PROVIDER=URL.")
+    library_assess.add_argument("--overall", dest="overall_status", choices=OVERALL_STATUSES)
+    library_assess.add_argument("--confidence", choices=CONFIDENCE_LEVELS)
+    library_assess.add_argument("--symbol-policy", choices=SYMBOL_POLICIES)
+    library_assess.add_argument("--footprint-policy", choices=FOOTPRINT_POLICIES)
+    library_assess.add_argument("--pin-policy", choices=PIN_POLICIES)
+    library_assess.add_argument("--import-status", dest="kicad_import_status", choices=IMPORT_STATUSES)
+    library_assess.add_argument("--recommended-action")
+    library_assess.add_argument("--notes")
+    library_assess.add_argument("--evidence", action="append", default=[], help="Evidence key/value as KEY=VALUE.")
+    library_assess.add_argument(
+        "--detect-digikey-models",
+        action="store_true",
+        help="Inspect saved Digi-Key payloads and fill Digi-Key model fields when possible.",
+    )
+    library_assess.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
+    library_assess.set_defaults(handler=handle_library_assess, requires_api=False)
+
+    library_decide = library_sub.add_parser(
+        "decide",
+        help="Decide KiCad library handling for BOM rows using built-in rules.",
+    )
+    decide_target = library_decide.add_mutually_exclusive_group(required=True)
+    decide_target.add_argument("--match", help="BOM selector as FIELD=VALUE, e.g. LineId=abc123.")
+    decide_target.add_argument("--all", action="store_true", help="Decide every BOM row.")
+    library_decide.add_argument("--project", default=argparse.SUPPRESS)
+    library_decide.add_argument("--pin-map", help="CSV with LineId/MPN and PinNumber/PinName/PinType columns.")
+    library_decide.add_argument("--overwrite", action="store_true", help="Overwrite existing library decisions.")
+    library_decide.add_argument("--no-kicad-env", action="store_true", help="Skip KiCad CLI/library path detection.")
+    library_decide.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
+    library_decide.set_defaults(handler=handle_library_decide, requires_api=False)
+
+    library_list = library_sub.add_parser(
+        "list",
+        help="List BOM rows with EDA library readiness records.",
+    )
+    library_list.add_argument("--project", default=argparse.SUPPRESS)
+    library_list.add_argument("--assessed-only", action="store_true")
+    library_list.add_argument("--needs-action", action="store_true")
+    library_list.add_argument("-o", "--json-output")
+    library_list.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
+    library_list.set_defaults(handler=handle_library_list, requires_api=False)
+
+    library_export = library_sub.add_parser(
+        "export-kicad",
+        help="Write a KiCad import bundle from BOM library decisions.",
+    )
+    library_export.add_argument("--project", default=argparse.SUPPRESS)
+    library_export.add_argument("--kicad-project", help="KiCad project directory. Defaults to --project/current project.")
+    library_export.add_argument("--output-dir", default="kicad_import")
+    library_export.add_argument("--pin-map", help="CSV with LineId/MPN and PinNumber/PinName/PinType columns.")
+    library_export.add_argument("--library-nickname", default="dktools_generated")
+    library_export.add_argument("--apply", action="store_true", help="Update the KiCad project's sym-lib-table.")
+    library_export.add_argument("--auto-decide", action="store_true", help="Use auto decisions for unassessed rows.")
+    library_export.add_argument("--save-decisions", action="store_true", help="Save auto decisions before export.")
+    library_export.add_argument("--no-kicad-env", action="store_true", help="Skip KiCad CLI/library path detection.")
+    library_export.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
+    library_export.set_defaults(handler=handle_library_export_kicad, requires_api=False)
 
     return parser
 
@@ -635,6 +740,241 @@ def handle_store_update(args: argparse.Namespace, config: AppConfig) -> JsonDict
         "updated": updated,
         "count": len(updated),
     }
+
+
+def handle_library_assess(args: argparse.Namespace, config: AppConfig) -> JsonDict:
+    project = resolve_project(args.project, config)
+    bom_db = BomDatabase(project.database_path)
+    lines = bom_db.list_lines(project)
+    selected = select_bom_lines(lines, match=args.match, all_rows=args.all)
+    library_db = LibraryDatabase(project.database_path)
+    part_store = PartStore(project.database_path, project.raw_dir) if args.detect_digikey_models else None
+    base_updates = library_updates_from_args(args)
+    base_evidence = parse_library_evidence(args.evidence)
+    external_sources = parse_external_sources(args.source)
+    if external_sources:
+        base_evidence["external_sources"] = external_sources
+        if base_updates.get("external_library_status") is None:
+            base_updates["external_library_status"] = "available"
+    if (args.external_provider or args.external_url) and base_updates.get("external_library_status") is None:
+        base_updates["external_library_status"] = "available"
+
+    saved = []
+    for line in selected:
+        updates = dict(base_updates)
+        evidence = dict(base_evidence)
+        if part_store is not None:
+            hints = digikey_model_hints_for_line(part_store, line)
+            evidence["digikey_detection"] = hints
+            for field in [
+                "digikey_eda_status",
+                "digikey_eda_url",
+                "digikey_3d_model_status",
+                "digikey_3d_model_url",
+            ]:
+                if updates.get(field) is None and hints.get(field):
+                    updates[field] = hints[field]
+        saved.append(library_db.upsert_assessment(project, line, updates, evidence=evidence))
+
+    return {
+        "ok": True,
+        "project": project.metadata(),
+        "library": {
+            "database": str(project.database_path),
+            "updated": saved,
+            "row_count": len(saved),
+            "matched_bom_rows": [line.row for line in selected],
+        },
+    }
+
+
+def handle_library_decide(args: argparse.Namespace, config: AppConfig) -> JsonDict:
+    project = resolve_project(args.project, config)
+    bom_db = BomDatabase(project.database_path)
+    lines = bom_db.list_lines(project)
+    selected = select_bom_lines(lines, match=args.match, all_rows=args.all)
+    library_db = LibraryDatabase(project.database_path)
+    pin_map = load_pin_map(Path(args.pin_map)) if args.pin_map else {}
+    kicad_env = None if args.no_kicad_env else detect_kicad_environment()
+    saved = []
+    decisions = []
+    for line in selected:
+        existing = library_db.get_assessment(project.project_name, line.line_id)
+        decision = decide_line_library(
+            line,
+            existing=existing,
+            pin_map=pin_map,
+            kicad_environment=kicad_env,
+        )
+        updates = merge_decision_updates(existing, decision["updates"], overwrite=args.overwrite)
+        evidence = dict(decision["evidence"])
+        if kicad_env is not None:
+            evidence["kicad_environment"] = kicad_env
+        saved_assessment = library_db.upsert_assessment(project, line, updates, evidence=evidence)
+        saved.append(saved_assessment)
+        decisions.append(decision["decision"])
+    return {
+        "ok": True,
+        "project": project.metadata(),
+        "library": {
+            "database": str(project.database_path),
+            "updated": saved,
+            "decisions": decisions,
+            "row_count": len(saved),
+            "pin_map_rows": sum(len(value) for value in pin_map.values()),
+            "kicad_environment": kicad_env,
+        },
+    }
+
+
+def handle_library_list(args: argparse.Namespace, config: AppConfig) -> JsonDict:
+    project = resolve_project(args.project, config)
+    bom_db = BomDatabase(project.database_path)
+    lines = bom_db.list_lines(project)
+    rows = LibraryDatabase(project.database_path).list_project(
+        project,
+        lines,
+        include_unassessed=not args.assessed_only,
+    )
+    if args.needs_action:
+        rows = [row for row in rows if row.get("needs_action")]
+    return {
+        "ok": True,
+        "project": project.metadata(),
+        "library": {
+            "database": str(project.database_path),
+            "rows": rows,
+            "row_count": len(rows),
+            "assessed_count": len([row for row in rows if row.get("assessment")]),
+            "needs_action_count": len([row for row in rows if row.get("needs_action")]),
+            "status_counts": library_status_counts(rows),
+        },
+    }
+
+
+def handle_library_export_kicad(args: argparse.Namespace, config: AppConfig) -> JsonDict:
+    project = resolve_project(args.project, config)
+    bom_db = BomDatabase(project.database_path)
+    lines = bom_db.list_lines(project)
+    library_db = LibraryDatabase(project.database_path)
+    pin_map = load_pin_map(Path(args.pin_map)) if args.pin_map else {}
+    kicad_env = None if args.no_kicad_env else detect_kicad_environment()
+    auto_decided = []
+    if args.auto_decide or args.save_decisions:
+        for line in lines:
+            existing = library_db.get_assessment(project.project_name, line.line_id)
+            if existing and not args.save_decisions:
+                continue
+            decision = decide_line_library(
+                line,
+                existing=existing,
+                pin_map=pin_map,
+                kicad_environment=kicad_env,
+            )
+            evidence = dict(decision["evidence"])
+            if kicad_env is not None:
+                evidence["kicad_environment"] = kicad_env
+            saved = library_db.upsert_assessment(
+                project,
+                line,
+                merge_decision_updates(existing, decision["updates"], overwrite=args.save_decisions),
+                evidence=evidence,
+            )
+            auto_decided.append(saved)
+    kicad_project = Path(args.kicad_project).expanduser() if args.kicad_project else project.root
+    if not kicad_project.is_absolute():
+        kicad_project = (project.root / kicad_project).resolve()
+    output_dir = resolve_project_output(project.root, args.output_dir)
+    result = export_kicad_import_bundle(
+        project,
+        lines,
+        library_db=library_db,
+        output_dir=output_dir,
+        kicad_project_dir=kicad_project,
+        pin_map=pin_map,
+        library_nickname=args.library_nickname,
+        apply_to_project=args.apply,
+        kicad_environment=kicad_env,
+    )
+    return {
+        "ok": True,
+        "project": project.metadata(),
+        "kicad_import": result,
+        "auto_decided": auto_decided,
+    }
+
+
+def select_bom_lines(lines: list[Any], *, match: str | None, all_rows: bool) -> list[Any]:
+    if all_rows:
+        return lines
+    if match is None:
+        raise BomError("library assess requires --match or --all")
+    field, expected = parse_assignment(match)
+    selected = [line for line in lines if str(line.row.get(field, "")) == expected]
+    if not selected:
+        raise BomError(f"no BOM rows matched {match}")
+    return selected
+
+
+def library_updates_from_args(args: argparse.Namespace) -> JsonDict:
+    return {
+        "kicad_symbol_status": args.kicad_symbol_status,
+        "kicad_symbol_name": args.symbol_name,
+        "kicad_footprint_status": args.kicad_footprint_status,
+        "kicad_footprint_name": args.footprint_name,
+        "kicad_3d_model_status": args.kicad_3d_model_status,
+        "kicad_3d_model_path": args.kicad_3d_model_path,
+        "digikey_eda_status": args.digikey_eda_status,
+        "digikey_eda_url": args.digikey_eda_url,
+        "digikey_3d_model_status": args.digikey_3d_model_status,
+        "digikey_3d_model_url": args.digikey_3d_model_url,
+        "external_library_status": args.external_library_status,
+        "external_library_provider": args.external_provider,
+        "external_library_url": args.external_url,
+        "overall_status": args.overall_status,
+        "confidence": args.confidence,
+        "symbol_policy": args.symbol_policy,
+        "footprint_policy": args.footprint_policy,
+        "pin_policy": args.pin_policy,
+        "kicad_import_status": args.kicad_import_status,
+        "recommended_action": args.recommended_action,
+        "notes": args.notes,
+    }
+
+
+def parse_library_evidence(items: list[str]) -> JsonDict:
+    evidence: JsonDict = {}
+    for item in items:
+        key, value = parse_key_value(item, "--evidence")
+        evidence[key] = value
+    return evidence
+
+
+def parse_external_sources(items: list[str]) -> list[JsonDict]:
+    sources = []
+    for item in items:
+        provider, url = parse_key_value(item, "--source")
+        sources.append({"provider": provider, "url": url})
+    return sources
+
+
+def parse_key_value(value: str, option_name: str) -> tuple[str, str]:
+    if "=" not in value:
+        raise ValueError(f"{option_name} must be KEY=VALUE: {value}")
+    key, item_value = value.split("=", 1)
+    key = key.strip()
+    if not key:
+        raise ValueError(f"{option_name} key must not be empty: {value}")
+    return key, item_value.strip()
+
+
+def library_status_counts(rows: list[JsonDict]) -> JsonDict:
+    counts: JsonDict = {}
+    for row in rows:
+        assessment = row.get("assessment") or {}
+        status = str(assessment.get("overall_status") or "unassessed")
+        counts[status] = int(counts.get(status, 0)) + 1
+    return counts
 
 
 def fetch_and_store_part(

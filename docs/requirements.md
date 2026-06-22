@@ -72,10 +72,27 @@ Digi-Key Product Information V4 APIを主要な情報源とする。公式ドキ
 - BOMを元にProductDetailsを取得し、価格、在庫、合計金額、警告を計算できること。
 - 価格計算結果はJSON、CSV、Markdownサマリとして出力できること。
 
+### KiCad/EDAライブラリ評価
+
+- BOM上の各明細について、KiCadの汎用シンボル、汎用フットプリント、汎用3Dモデルを使用できるかをSQLiteに保存できること。
+- 評価はBOM明細の `LineId` と `project_name` に紐づけ、同一型番でも用途、値、実装サイズ、リファレンスごとに異なる判断を保持できること。
+- Digi-Key上にEDA/CADライブラリや3Dモデルが存在するかを、保存済みDigi-Keyレスポンスから判定できる場合は補助的に抽出し、根拠としてDBに残せること。
+- SnapEDA、Ultra Librarian、メーカー公式ライブラリ、GitHub等の外部サービスからシンボル、フットプリント、3D CADを入手できるかを、提供元、URL、メモ、確度、推奨アクションとともに保存できること。
+- 各評価は `unknown`、`generic_ok`、`available`、`not_found`、`needs_custom`、`not_required`、`risk`、`unverified` などのAIが扱いやすい状態値を持てること。
+- 明細全体の状態として `ready`、`usable_with_generic`、`needs_download`、`needs_custom`、`blocked`、`review`、`unknown` を保存できること。
+- 未評価、要自作、未検証、リスクありの明細を一覧化し、回路図・PCB作業前のライブラリ準備TODOとして使えること。
+- 将来のKiCadプロジェクト連携では、BOMの `Reference Designator`、`Footprint`、`LineId` を手がかりに、`.kicad_sch`、`.kicad_pcb`、ライブラリテーブルとの照合へ拡張できること。
+- 抵抗、コンデンサ、インダクタ、ダイオードなどの定型部品はKiCad標準の汎用シンボルと汎用フットプリントを優先すること。
+- ICや半導体などピン配置・ピン名が部品固有のものは、汎用パッケージフットプリントを優先しつつ、シンボルは個別ピン配置・ピン名を必須として扱うこと。
+- 個別ICのピン番号、ピン名、電気タイプをCSVで与えられる場合、プロジェクト用 `.kicad_sym` を生成し、KiCadプロジェクトの `sym-lib-table` に登録できること。
+- BOMからKiCad取り込み用の計画JSON、シンボルフィールドCSV、フットプリント割当CSV、生成シンボルライブラリ、Markdownレポートをまとめて出力できること。
+- KiCad CLIが利用可能な環境では、パスやバージョン、標準ライブラリ探索結果を評価根拠として保存できること。KiCad CLIがない環境でも、ファイル生成とDB判定は継続できること。
+
 ### AIエージェント向けドキュメント
 
 - 日本語Markdownで、AIエージェントが迷わず使える手順書を作成すること。
 - 初期化、検索、候補比較、BOM編集、価格計算、ローカルDB更新、Digi-KeyアップロードCSV作成のコマンド例を含めること。
+- KiCad/EDAライブラリ評価の保存、一覧化、未評価抽出のコマンド例を含めること。
 - APIキーや `.env` の中身を出力しない注意を明記すること。
 
 ## 非機能要件
@@ -88,4 +105,4 @@ Digi-Key Product Information V4 APIを主要な情報源とする。公式ドキ
 
 ## 初期スコープ
 
-初期実装では、Product Information V4のProductDetailsとKeywordSearchを対象にする。注文API、MyListsへの直接API登録、3-legged OAuth、KiCadネイティブファイル解析は対象外とする。Digi-Keyアップロードについては、Webの部品リストに取り込ませやすいCSV生成までを対象にする。
+初期実装では、Product Information V4のProductDetailsとKeywordSearch、DB上のBOM管理、価格計算、Digi-KeyアップロードCSV生成、BOM明細単位のKiCad/EDAライブラリ評価保存を対象にする。注文API、MyListsへの直接API登録、3-legged OAuth、KiCadネイティブファイルの自動解析は対象外とし、KiCad連携は将来拡張として扱う。
