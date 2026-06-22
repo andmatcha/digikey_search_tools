@@ -5,7 +5,13 @@ description: Use this skill when selecting electronic parts with Digi-Key, searc
 
 # Digi-Key Parts Workflow
 
-Use this repository's CLI from the repository root:
+Use the installed `dktools` wrapper from any directory:
+
+```bash
+dktools ...
+```
+
+If `dktools` is not available, run the module from the repository root:
 
 ```bash
 python3 -m digikey_tools ...
@@ -18,25 +24,26 @@ Keep the workflow grounded in the target project's `selection_criteria.md`. Do n
 1. Identify the project directory. If none exists, create one:
 
 ```bash
-python3 -m digikey_tools project init projects/<project-name> --pretty
+dktools project init <project-dir> --pretty
 ```
 
-2. Read or inspect the project's `selection_criteria.md` before recommending parts.
-3. Use the CLI for current Digi-Key data. Do not scrape Digi-Key pages.
-4. Read `docs/agent_usage.md` when exact command options or output interpretation are needed.
+2. For an external project, `cd` into the project directory and omit `--project` for normal commands.
+3. Read or inspect the project's `selection_criteria.md` before recommending parts.
+4. Use the CLI for current Digi-Key data. Do not scrape Digi-Key pages.
+5. Read `docs/agent_usage.md` when exact command options or output interpretation are needed.
 
 ## Common Commands
 
 Search one Digi-Key part number or manufacturer part number:
 
 ```bash
-python3 -m digikey_tools --project projects/<project-name> search part <part-number> --quantity <qty> --pretty
+dktools search part <part-number> --quantity <qty> --pretty
 ```
 
 Search candidates with common procurement filters:
 
 ```bash
-python3 -m digikey_tools --project projects/<project-name> search keyword "<query>" \
+dktools search keyword "<query>" \
   --in-stock \
   --normally-stocking \
   --rohs \
@@ -50,7 +57,7 @@ python3 -m digikey_tools --project projects/<project-name> search keyword "<quer
 Add a selected part to the local BOM:
 
 ```bash
-python3 -m digikey_tools --project projects/<project-name> bom add \
+dktools bom add \
   --reference <refdes> \
   --quantity <qty> \
   --digikey-part <dk-part-number> \
@@ -65,7 +72,7 @@ python3 -m digikey_tools --project projects/<project-name> bom add \
 Update or remove BOM rows by `LineId`:
 
 ```bash
-python3 -m digikey_tools --project projects/<project-name> bom update \
+dktools bom update \
   --match LineId=<line-id> \
   --set Quantity=<qty> \
   --set Notes="<note>" \
@@ -73,7 +80,7 @@ python3 -m digikey_tools --project projects/<project-name> bom update \
 ```
 
 ```bash
-python3 -m digikey_tools --project projects/<project-name> bom remove \
+dktools bom remove \
   --match LineId=<line-id> \
   --pretty
 ```
@@ -81,7 +88,7 @@ python3 -m digikey_tools --project projects/<project-name> bom remove \
 Calculate BOM pricing and write CSV/Markdown/JSON outputs:
 
 ```bash
-python3 -m digikey_tools --project projects/<project-name> bom price \
+dktools bom price \
   --price-csv bom/price.csv \
   --summary-md docs/price_summary.md \
   --json-output docs/price_result.json \
@@ -91,7 +98,7 @@ python3 -m digikey_tools --project projects/<project-name> bom price \
 Create a Digi-Key upload CSV:
 
 ```bash
-python3 -m digikey_tools --project projects/<project-name> bom export-digikey \
+dktools bom export-digikey \
   --output bom/digikey_upload.csv \
   --pretty
 ```
@@ -99,7 +106,7 @@ python3 -m digikey_tools --project projects/<project-name> bom export-digikey \
 Refresh local stored part data:
 
 ```bash
-python3 -m digikey_tools --project projects/<project-name> store update --from-bom --pretty
+dktools store update --from-bom --pretty
 ```
 
 ## Selection Rules

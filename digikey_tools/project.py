@@ -49,7 +49,7 @@ class ProjectContext:
 def resolve_project(path: str | Path | None, config: AppConfig, *, require: bool = True) -> ProjectContext:
     root = Path(path).expanduser() if path else Path.cwd()
     if not root.is_absolute():
-        root = (REPO_ROOT / root).resolve()
+        root = (Path.cwd() / root).resolve()
     else:
         root = root.resolve()
     if require and not root.exists():
@@ -75,7 +75,7 @@ def resolve_project(path: str | Path | None, config: AppConfig, *, require: bool
 def init_project(path: str | Path, config: AppConfig, *, force: bool = False) -> ProjectContext:
     root = Path(path).expanduser()
     if not root.is_absolute():
-        root = (REPO_ROOT / root).resolve()
+        root = (Path.cwd() / root).resolve()
     else:
         root = root.resolve()
     root.mkdir(parents=True, exist_ok=True)
