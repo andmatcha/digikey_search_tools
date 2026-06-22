@@ -40,6 +40,21 @@ Search one Digi-Key part number or manufacturer part number:
 dktools search part <part-number> --quantity <qty> --pretty
 ```
 
+Fetch and persist current Digi-Key part data, including price, status, stock, compliance, and datasheet URL:
+
+```bash
+dktools store fetch <part-number> --quantity <qty> --pretty
+```
+
+Show a saved part or its datasheet:
+
+```bash
+dktools store show <part-number> --pretty
+dktools store datasheet <part-number> --pretty
+dktools store datasheet <part-number> --open --pretty
+dktools store datasheet <part-number> --download-dir docs/datasheets --pretty
+```
+
 Search candidates with common procurement filters:
 
 ```bash
@@ -119,6 +134,7 @@ Refresh local stored part data:
 
 ```bash
 dktools store update --from-bom --pretty
+dktools store update <part-number> --refresh --pretty
 ```
 
 ## Selection Rules
@@ -129,6 +145,7 @@ dktools store update --from-bom --pretty
 - Use `product.parameter_map` for spec checks, but verify against `selection_criteria.md` before final recommendation.
 - Use KeywordSearch for exploration, then ProductDetails through `search part` or `bom price` for final confirmation.
 - Treat SQLite `bom_items` keyed by `project_name` as the source of truth; treat `bom/bom.csv` as a generated snapshot.
+- Treat SQLite `parts` columns as the quick local index for status, price, stock, compliance, and datasheet URLs; refresh with `store fetch` or `store update` before final decisions.
 - Include the reason for a selected part in the BOM `Notes` or project docs.
 
 ## Validation

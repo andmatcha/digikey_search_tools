@@ -3,6 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import urllib.error
+import urllib.request
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +26,7 @@ from .normalize import (
     normalize_product_details,
 )
 from .project import BOM_COLUMNS, init_project, resolve_project
-from .store import PartStore
+from .store import PartStore, safe_filename
 
 
 JsonDict = dict[str, Any]
@@ -128,10 +131,10 @@ def build_parser() -> argparse.ArgumentParser:
     keyword_parser.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
     keyword_parser.set_defaults(handler=handle_search_keyword, requires_api=True)
 
-    bom_parser = subparsers.add_parser("bom", help="Edit and price local BOM CSV.")
+    bom_parser = subparsers.add_parser("bom", help="Edit and price DB-managed BOM records.")
     bom_sub = bom_parser.add_subparsers(dest="bom_command", required=True)
 
-    bom_init = bom_sub.add_parser("init", help="Create an empty BOM CSV.")
+    bom_init = bom_sub.add_parser("init", help="Initialize DB-managed BOM records and CSV snapshot.")
     bom_init.add_argument("--project", default=argparse.SUPPRESS)
     bom_init.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
     bom_init.set_defaults(handler=handle_bom_init, requires_api=False)
@@ -198,8 +201,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     store_list = store_sub.add_parser("list", help="List saved parts.")
     store_list.add_argument("--project", default=argparse.SUPPRESS)
+    store_list.add_argument("--status")
+    store_list.add_argument("--active-only", action="store_true")
+    store_list.add_argument("--missing-datasheet", action="store_true")
     store_list.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
     store_list.set_defaults(handler=handle_store_list, requires_api=False)
+
+    store_fetch = store_sub.add_parser("fetch", help="Fetch product details from Digi-Key and save them.")
+    store_fetch.add_argument("product_numbers", nargs="+")
+    store_fetch.add_argument("--project", default=argparse.SUPPRESS)
+    store_fetch.add_argument("--quantity", type=int, default=1)
+    store_fetch.add_argument("--refresh", action="store_true")
+    store_fetch.add_argument("--include-raw", action="store_true")
+    store_fetch.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
+    store_fetch.set_defaults(handler=handle_store_fetch, requires_api=True)
+
+    store_show = store_sub.add_parser("show", help="Show one saved part from the local database.")
+    store_show.add_argument("identifier")
+    store_show.add_argument("--project", default=argparse.SUPPRESS)
+    store_show.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
+    store_show.set_defaults(handler=handle_store_show, requires_api=False)
+
+    store_datasheet = store_sub.add_parser("datasheet", help="Show, open, or download a saved part datasheet.")
+    store_datasheet.add_argument("identifier")
+    store_datasheet.add_argument("--project", default=argparse.SUPPRESS)
+    store_datasheet.add_argument("--open", action="store_true")
+    store_datasheet.add_argument("--download-dir")
+    store_datasheet.add_argument("--pretty", action="store_true", default=argparse.SUPPRESS)
+    store_datasheet.set_defaults(handler=handle_store_datasheet, requires_api=False)
 
     store_export = store_sub.add_parser("export", help="Export local store as JSON.")
     store_export.add_argument("--project", default=argparse.SUPPRESS)
@@ -209,6 +238,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     store_update = store_sub.add_parser("update", help="Refresh parts from store or BOM.")
     store_update.add_argument("--project", default=argparse.SUPPRESS)
+    store_update.add_argument("product_numbers", nargs="*")
     source = store_update.add_mutually_exclusive_group()
     source.add_argument("--from-bom", action="store_true")
     source.add_argument("--all", action="store_true")
@@ -484,7 +514,82 @@ def handle_store_list(args: argparse.Namespace, config: AppConfig) -> JsonDict:
     return {
         "ok": True,
         "project": project.metadata(),
-        "parts": [record.to_json() for record in store.list_parts()],
+        "parts": [
+            record.to_json()
+            for record in store.list_parts(
+                status=args.status,
+                active_only=args.active_only,
+                missing_datasheet=args.missing_datasheet,
+            )
+        ],
+    }
+
+
+def handle_store_fetch(args: argparse.Namespace, config: AppConfig) -> JsonDict:
+    project = resolve_project(args.project, config)
+    client = DigikeyClient(config, cache_dir=project.raw_dir / "cache", refresh=args.refresh)
+    store = PartStore(project.database_path, project.raw_dir)
+    fetched = [
+        fetch_and_store_part(
+            product_number,
+            client=client,
+            store=store,
+            config=config,
+            quantity=args.quantity,
+            include_raw=args.include_raw,
+        )
+        for product_number in args.product_numbers
+    ]
+    return {
+        "ok": all(item.get("ok") for item in fetched),
+        "project": project.metadata(),
+        "fetched": fetched,
+        "count": len(fetched),
+    }
+
+
+def handle_store_show(args: argparse.Namespace, config: AppConfig) -> JsonDict:
+    project = resolve_project(args.project, config)
+    part = PartStore(project.database_path, project.raw_dir).get_part(args.identifier)
+    return {
+        "ok": part is not None,
+        "project": project.metadata(),
+        "part": part,
+        "error": None if part is not None else f"part not found in local database: {args.identifier}",
+    }
+
+
+def handle_store_datasheet(args: argparse.Namespace, config: AppConfig) -> JsonDict:
+    project = resolve_project(args.project, config)
+    datasheet = PartStore(project.database_path, project.raw_dir).datasheet_for(args.identifier)
+    if datasheet is None:
+        return {
+            "ok": False,
+            "project": project.metadata(),
+            "error": f"part not found in local database: {args.identifier}",
+            "hints": ["Run `dktools store fetch <part-number>` first."],
+        }
+    url = datasheet.get("datasheet_url")
+    if not url:
+        return {
+            "ok": False,
+            "project": project.metadata(),
+            "datasheet": datasheet,
+            "error": "datasheet URL is not saved for this part.",
+            "hints": ["Refresh the part with `dktools store fetch <part-number> --refresh`."],
+        }
+    opened = False
+    if args.open:
+        opened = webbrowser.open(str(url))
+    downloaded_to = None
+    if args.download_dir:
+        downloaded_to = str(download_datasheet(str(url), Path(args.download_dir), datasheet))
+    return {
+        "ok": True,
+        "project": project.metadata(),
+        "datasheet": datasheet,
+        "opened": opened,
+        "downloaded_to": downloaded_to,
     }
 
 
@@ -503,7 +608,9 @@ def handle_store_export(args: argparse.Namespace, config: AppConfig) -> JsonDict
 def handle_store_update(args: argparse.Namespace, config: AppConfig) -> JsonDict:
     project = resolve_project(args.project, config)
     store = PartStore(project.database_path, project.raw_dir)
-    if args.from_bom or not args.all:
+    if args.product_numbers:
+        product_numbers = args.product_numbers
+    elif args.from_bom or not args.all:
         lines = BomDatabase(project.database_path).list_lines(project)
         product_numbers = [line.product_number for line in lines if line.product_number and not line.dnp]
     else:
@@ -511,23 +618,85 @@ def handle_store_update(args: argparse.Namespace, config: AppConfig) -> JsonDict
     client = DigikeyClient(config, cache_dir=project.raw_dir / "cache", refresh=args.refresh)
     updated: list[JsonDict] = []
     for product_number in product_numbers:
-        raw, cache_hit = client.product_details(str(product_number))
-        normalized = normalize_product_details(
-            raw,
-            query={"product_number": product_number, "store_update": True},
-            config=config,
-            requested_quantity=1,
-            cache_hit=cache_hit,
-            include_raw=args.include_raw,
+        updated.append(
+            fetch_and_store_part(
+                str(product_number),
+                client=client,
+                store=store,
+                config=config,
+                quantity=1,
+                include_raw=args.include_raw,
+                query_extra={"store_update": True},
+            )
         )
-        key = store.upsert_product(normalized, raw)
-        updated.append({"product_number": product_number, "product_key": key, "cache_hit": cache_hit})
     return {
-        "ok": True,
+        "ok": all(item.get("ok") for item in updated),
         "project": project.metadata(),
         "updated": updated,
         "count": len(updated),
     }
+
+
+def fetch_and_store_part(
+    product_number: str,
+    *,
+    client: DigikeyClient,
+    store: PartStore,
+    config: AppConfig,
+    quantity: int,
+    include_raw: bool,
+    query_extra: JsonDict | None = None,
+) -> JsonDict:
+    raw, cache_hit = client.product_details(str(product_number))
+    query: JsonDict = {
+        "product_number": product_number,
+        "requested_quantity": quantity,
+    }
+    if query_extra:
+        query.update(query_extra)
+    normalized = normalize_product_details(
+        raw,
+        query=query,
+        config=config,
+        requested_quantity=quantity,
+        cache_hit=cache_hit,
+        include_raw=include_raw,
+    )
+    key = store.upsert_product(normalized, raw)
+    part = store.get_part(key)
+    return {
+        "ok": True,
+        "input_product_number": product_number,
+        "product_key": key,
+        "cache_hit": cache_hit,
+        "status": (part or {}).get("status"),
+        "quantity_available": (part or {}).get("quantity_available"),
+        "unit_price": (part or {}).get("unit_price"),
+        "currency": (part or {}).get("currency"),
+        "datasheet_url": (part or {}).get("datasheet_url"),
+        "product_url": (part or {}).get("product_url"),
+    }
+
+
+def download_datasheet(url: str, output_dir: Path, datasheet: JsonDict) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = safe_filename(
+        str(
+            datasheet.get("manufacturer_part_number")
+            or datasheet.get("digikey_product_number")
+            or datasheet.get("product_key")
+            or "datasheet"
+        )
+    )
+    suffix = ".pdf" if ".pdf" in url.lower().split("?", 1)[0] else ".bin"
+    output_path = output_dir / f"{stem}{suffix}"
+    request = urllib.request.Request(url, headers={"User-Agent": "digikey-search-tools/0.1"})
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            output_path.write_bytes(response.read())
+    except urllib.error.URLError as error:
+        raise OSError(f"could not download datasheet: {error}") from error
+    return output_path
 
 
 def build_keyword_filters(args: argparse.Namespace) -> JsonDict:

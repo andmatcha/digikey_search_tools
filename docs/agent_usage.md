@@ -69,6 +69,26 @@ python3 -m digikey_tools --project projects/my_board search part TPS40210DGQR --
 - `warnings`
 - `project.selection_criteria`
 
+## 部品データをDBに保存・更新する
+
+APIから部品データを取得して、価格、ステータス、在庫、コンプライアンス、カテゴリ、最良価格、データシートURLなどをSQLiteに保存します。
+
+```bash
+python3 -m digikey_tools --project projects/my_board store fetch TPS40210DGQR --quantity 3 --pretty
+```
+
+保存済み部品の詳細を確認します。
+
+```bash
+python3 -m digikey_tools --project projects/my_board store show TPS40210DGQR --pretty
+```
+
+特定部品だけ再取得する場合は `store update` に品番を渡します。
+
+```bash
+python3 -m digikey_tools --project projects/my_board store update TPS40210DGQR --refresh --pretty
+```
+
 ## ステータスやスペックで検索する
 
 ```bash
@@ -206,6 +226,13 @@ Digi-Key側の部品リストやBOMアップロード画面で列マッピング
 python3 -m digikey_tools --project projects/my_board store list --pretty
 ```
 
+有効部品だけ、またはデータシートURLが未保存の部品だけを絞り込めます。
+
+```bash
+python3 -m digikey_tools --project projects/my_board store list --active-only --pretty
+python3 -m digikey_tools --project projects/my_board store list --missing-datasheet --pretty
+```
+
 BOMに含まれる部品を一括更新:
 
 ```bash
@@ -222,6 +249,34 @@ DB内容をJSONへ出力:
 
 ```bash
 python3 -m digikey_tools --project projects/my_board store export --output docs/local_store.json --pretty
+```
+
+## データシートにアクセスする
+
+`store fetch`、`search part`、`bom price`、`store update` で取得したデータには、Digi-Keyが返したデータシートURLが保存されます。
+
+URLを表示:
+
+```bash
+python3 -m digikey_tools --project projects/my_board store datasheet TPS40210DGQR --pretty
+```
+
+ブラウザで開く:
+
+```bash
+python3 -m digikey_tools --project projects/my_board store datasheet TPS40210DGQR --open --pretty
+```
+
+ローカルに保存:
+
+```bash
+python3 -m digikey_tools --project projects/my_board store datasheet TPS40210DGQR --download-dir docs/datasheets --pretty
+```
+
+未保存の場合は先に次を実行してください。
+
+```bash
+python3 -m digikey_tools --project projects/my_board store fetch TPS40210DGQR --pretty
 ```
 
 ## 検証コマンド

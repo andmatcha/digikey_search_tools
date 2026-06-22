@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import sqlite3
 import tempfile
 import unittest
 from argparse import Namespace
@@ -102,25 +103,100 @@ class BomStoreCliTest(unittest.TestCase):
                 "manufacturer_part_number": "TPS40210DGQR",
                 "description": "Boost controller",
                 "status": "Active",
+                "status_id": 1,
+                "status_flags": {
+                    "normally_stocking": True,
+                    "discontinued": False,
+                    "end_of_life": False,
+                    "back_order_not_allowed": False,
+                    "non_cancelable_non_returnable": False,
+                },
+                "availability": {
+                    "active": True,
+                    "immediate": True,
+                },
+                "category": {"id": 1234, "name": "PMIC"},
+                "compliance": {"rohs_status": "ROHS3 Compliant"},
                 "quantity_available": 25,
                 "product_url": "https://example.com/product",
                 "datasheet_url": "https://example.com/datasheet.pdf",
+                "parameters": [{"name": "Voltage - Supply", "value": "4.5V ~ 52V"}],
+                "parameter_map": {"Voltage - Supply": "4.5V ~ 52V"},
+                "variations": [
+                    {
+                        "digikey_product_number": "296-26969-1-ND",
+                        "marketplace": False,
+                    }
+                ],
                 "best_offer": {
                     "digikey_product_number": "296-26969-1-ND",
                     "unit_price": 346.0,
                     "estimated_total_price": 692.0,
+                    "purchase_quantity": 2,
+                    "package_type": "Cut Tape",
+                    "pricing_type": "standard",
+                    "in_stock_enough": True,
+                    "quantity_available": 25,
                 },
             },
+            "warnings": [],
         }
         with tempfile.TemporaryDirectory() as tmpdir:
             store = PartStore(Path(tmpdir) / "parts.sqlite3", Path(tmpdir) / "raw")
             key = store.upsert_product(normalized, {"Product": {"test": True}})
             records = store.list_parts()
+            part = store.get_part("TPS40210DGQR")
+            datasheet = store.datasheet_for("296-26969-1-ND")
             exported = store.export_json()
         self.assertEqual(key, "296-26969-1-ND")
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].manufacturer_part_number, "TPS40210DGQR")
+        self.assertTrue(records[0].active)
+        self.assertTrue(records[0].immediate)
+        self.assertEqual(records[0].estimated_total_price, 692.0)
+        self.assertEqual(records[0].purchase_quantity, 2)
+        self.assertEqual(records[0].package_type, "Cut Tape")
+        self.assertEqual(records[0].rohs_status, "ROHS3 Compliant")
+        self.assertEqual(records[0].datasheet_url, "https://example.com/datasheet.pdf")
+        self.assertEqual(part["category_name"], "PMIC")
+        self.assertEqual(part["parameter_map"]["Voltage - Supply"], "4.5V ~ 52V")
+        self.assertEqual(datasheet["datasheet_url"], "https://example.com/datasheet.pdf")
         self.assertEqual(len(exported["parts"]), 1)
+
+    def test_store_migrates_existing_parts_table(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "parts.sqlite3"
+            with sqlite3.connect(db_path) as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE parts (
+                        product_key TEXT PRIMARY KEY,
+                        digikey_product_number TEXT,
+                        manufacturer_part_number TEXT,
+                        manufacturer TEXT,
+                        description TEXT,
+                        status TEXT,
+                        quantity_available INTEGER,
+                        unit_price REAL,
+                        estimated_total_price REAL,
+                        currency TEXT,
+                        product_url TEXT,
+                        datasheet_url TEXT,
+                        fetched_at TEXT NOT NULL,
+                        normalized_json TEXT NOT NULL,
+                        raw_json_path TEXT
+                    )
+                    """
+            )
+            store = PartStore(db_path, Path(tmpdir) / "raw")
+            with sqlite3.connect(db_path) as connection:
+                columns = {
+                    row[1]
+                    for row in connection.execute("PRAGMA table_info(parts)").fetchall()
+                }
+        self.assertIn("rohs_status", columns)
+        self.assertIn("best_offer_json", columns)
+        self.assertIn("datasheet_url", columns)
 
     def test_keyword_filter_builder_maps_common_options(self) -> None:
         args = Namespace(

@@ -64,7 +64,8 @@ digikey_search_tools/
 - BOMはSQLiteの `bom_projects` / `bom_items` を正とし、`project_name` ごとに明細を管理する。
 - `bom/bom.csv` はDigi-Keyアップロードや人間確認用のスナップショットとしてDBから生成する。
 - SQLite保存とraw JSON保存を実装する。
-- `store update/list/export` を実装する。
+- `store fetch/show/update/list/export/datasheet` を実装する。
+- 部品取得時に価格、ステータス、在庫、ステータスフラグ、カテゴリ、RoHS/REACH、最良価格、データシートURLを `parts` の列へ保存する。
 
 ### 4. ドキュメント・テスト
 
@@ -79,6 +80,8 @@ digikey_search_tools/
 ```bash
 python3 -m digikey_tools project init projects/my_board
 python3 -m digikey_tools --project projects/my_board search part TPS40210DGQR --quantity 3 --pretty
+python3 -m digikey_tools --project projects/my_board store fetch TPS40210DGQR --quantity 3 --pretty
+python3 -m digikey_tools --project projects/my_board store datasheet TPS40210DGQR --pretty
 python3 -m digikey_tools --project projects/my_board search keyword "buck converter" --in-stock --rohs --has-datasheet --exclude-marketplace --limit 10 --pretty
 python3 -m digikey_tools --project projects/my_board bom add --reference U1 --quantity 1 --manufacturer-part TPS40210DGQR --notes "boost controller"
 python3 -m digikey_tools --project projects/my_board bom list --pretty
@@ -91,7 +94,7 @@ python3 -m digikey_tools --project projects/my_board store update --from-bom
 
 初期スキーマは次のテーブルにする。
 
-- `parts`: 正規化済み部品情報、Digi-Key品番、メーカー品番、メーカー、ステータス、在庫、最安候補、取得日時、raw JSONパス。
+- `parts`: 正規化済み部品情報、Digi-Key品番、メーカー品番、メーカー、ステータス、在庫、価格、購入数量、RoHS/REACH、カテゴリ、データシートURL、取得日時、raw JSONパス。
 - `queries`: 検索クエリ、検索種別、正規化結果、取得日時。
 - `bom_projects`: `project_name`、プロジェクトルート、作成・更新日時。
 - `bom_items`: `project_name` に紐づくBOM明細、LineId、位置、数量、品番、DNP、メモなど。
