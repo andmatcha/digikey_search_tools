@@ -11,21 +11,33 @@ from .errors import ProjectError
 class SelectionCriteria:
     path: Path
     text: str
-    sha256: str
+    sha256: str | None
     line_count: int
+    loaded: bool
+    note: str | None = None
 
     def to_metadata(self) -> dict[str, object]:
-        return {
+        metadata: dict[str, object] = {
             "path": str(self.path),
             "sha256": self.sha256,
             "line_count": self.line_count,
-            "loaded": True,
+            "loaded": self.loaded,
         }
+        if self.note:
+            metadata["note"] = self.note
+        return metadata
 
 
 def read_selection_criteria(path: Path) -> SelectionCriteria:
     if not path.exists():
-        raise ProjectError(f"selection criteria file not found: {path}")
+        return SelectionCriteria(
+            path=path,
+            text="",
+            sha256=None,
+            line_count=0,
+            loaded=False,
+            note="selection criteria file not found; use requirements from the current request or project docs.",
+        )
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as error:
@@ -36,4 +48,5 @@ def read_selection_criteria(path: Path) -> SelectionCriteria:
         text=text,
         sha256=digest,
         line_count=len(text.splitlines()),
+        loaded=True,
     )

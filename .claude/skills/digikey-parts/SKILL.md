@@ -17,7 +17,7 @@ If `dktools` is not available, run the module from the repository root:
 python3 -m digikey_tools ...
 ```
 
-Keep the workflow grounded in the target project's `selection_criteria.md`. Do not print `.env` contents, OAuth tokens, client secrets, or account IDs.
+Keep the workflow grounded in the target project's `selection_criteria.md` when it exists, or in the requirements the user provided in the current request/project docs. Do not print `.env` contents, OAuth tokens, client secrets, or account IDs.
 
 ## First Checks
 
@@ -28,7 +28,7 @@ dktools project init <project-dir> --pretty
 ```
 
 2. For an external project, `cd` into the project directory and omit `--project` for normal commands.
-3. Read or inspect the project's `selection_criteria.md` before recommending parts.
+3. Check `project.selection_criteria.loaded` in CLI output. If it is true, read or inspect the project's `selection_criteria.md` before recommending parts; if it is false, use the requirements provided in the current request or project docs.
 4. Use the CLI for current Digi-Key data. Do not scrape Digi-Key pages.
 5. Read `docs/agent_usage.md` when exact command options or output interpretation are needed.
 
@@ -142,7 +142,7 @@ dktools store update <part-number> --refresh --pretty
 - Prefer active, normally stocked, in-stock, RoHS-compliant parts with datasheets.
 - Treat Marketplace-only, EOL, obsolete, NCNR, missing datasheet, excessive MOQ, and insufficient stock as risks.
 - Use `product.best_offer.purchase_quantity` for cost reasoning because it reflects minimum order quantity.
-- Use `product.parameter_map` for spec checks, but verify against `selection_criteria.md` before final recommendation.
+- Use `product.parameter_map` for spec checks, and verify against `selection_criteria.md` when present or the user's stated requirements before final recommendation.
 - Use KeywordSearch for exploration, then ProductDetails through `search part` or `bom price` for final confirmation.
 - Treat SQLite `bom_items` keyed by `project_name` as the source of truth; treat `bom/bom.csv` as a generated snapshot.
 - Treat SQLite `parts` columns as the quick local index for status, price, stock, compliance, and datasheet URLs; refresh with `store fetch` or `store update` before final decisions.

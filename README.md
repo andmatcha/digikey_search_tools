@@ -1,6 +1,6 @@
 # digikey_search_tools
 
-AIエージェントが使いやすいDigi-Key部品検索、部品選定、BOM管理、価格計算ツール群です。Python標準ライブラリ中心で実装しており、プロジェクトごとの `selection_criteria.md` とSQLiteデータベースでBOMを管理します。`bom/bom.csv` はDigi-Key連携や確認用のスナップショットとして出力されます。
+AIエージェントが使いやすいDigi-Key部品検索、部品選定、BOM管理、価格計算ツール群です。Python標準ライブラリ中心で実装しており、任意の `selection_criteria.md` とSQLiteデータベースでBOMを管理します。`selection_criteria.md` がない外部プロジェクトでも、AIエージェントに要件を伝えて選定できます。`bom/bom.csv` はDigi-Key連携や確認用のスナップショットとして出力されます。
 
 ## クイックスタート
 
@@ -84,6 +84,8 @@ dktools bom list --pretty
 dktools bom projects --pretty
 dktools bom price --pretty
 ```
+
+`selection_criteria.md` は任意です。継続的に残したい選定基準がある場合は `dktools project init . --pretty` で雛形を作るか、自分で作成してください。一時的な選定や外部プロジェクトでは、AIエージェントへの依頼文に電源条件、実装条件、在庫条件、除外条件などを直接書いて使えます。ファイルがない場合、CLIの出力メタデータでは `project.selection_criteria.loaded` が `false` になります。
 
 複数プロジェクトを1つのSQLite DBでまとめたい場合は、`config/digikey.json` の `paths.database` に絶対パスを指定してください。その場合もBOM明細は `project_name` ごとに分離されます。
 

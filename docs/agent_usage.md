@@ -2,7 +2,7 @@
 
 ## 基本方針
 
-このツールは、プロジェクトごとの `selection_criteria.md` を読みながら、Digi-Keyの部品検索、候補比較、BOM管理、価格計算を行うためのCLIです。BOMはSQLite内の `bom_projects` / `bom_items` に `project_name` ごとに保存され、`bom/bom.csv` は確認・アップロード用のスナップショットとして更新されます。AIエージェントは、検索やBOM操作の前に必ず対象プロジェクトを決め、出力JSON内の `project.selection_criteria` を確認してください。
+このツールは、Digi-Keyの部品検索、候補比較、BOM管理、価格計算を行うためのCLIです。プロジェクトに `selection_criteria.md` があればそれを読み、ない場合は現在の依頼文や関連文書でユーザーから伝えられた要件をもとに選定します。BOMはSQLite内の `bom_projects` / `bom_items` に `project_name` ごとに保存され、`bom/bom.csv` は確認・アップロード用のスナップショットとして更新されます。AIエージェントは、検索やBOM操作の前に対象プロジェクトを決め、出力JSON内の `project.selection_criteria.loaded` を確認してください。
 
 `.env` の中身は表示しないでください。認証情報はCLIが自動で読み込みます。
 
@@ -37,15 +37,15 @@ python3 -m digikey_tools project init projects/my_board --pretty
 
 作成される主なファイルは次の通りです。
 
-- `projects/my_board/selection_criteria.md`: 選定基準
+- `projects/my_board/selection_criteria.md`: 選定基準。任意。継続的に残したい条件がある場合に使います。
 - `projects/my_board/data/digikey/parts.sqlite3`: ローカル部品DBとプロジェクト別BOM DB
 - `projects/my_board/bom/bom.csv`: DBから出力されるBOMスナップショット
 - `projects/my_board/data/digikey/raw/`: 取得した生JSON
 - `projects/my_board/docs/`: 価格サマリなどの出力先
 
-## 選定基準を書く
+## 選定基準を指定する
 
-`selection_criteria.md` に、電源電圧、実装条件、温度範囲、在庫条件、RoHS、除外条件、価格目安などを書きます。検索結果だけで判断せず、このファイルと照合して候補を選んでください。
+継続的に残したい基準がある場合は、`selection_criteria.md` に電源電圧、実装条件、温度範囲、在庫条件、RoHS、除外条件、価格目安などを書きます。外部プロジェクトや一時的な選定では、このファイルは不要です。AIエージェントへの依頼文に要件を直接書き、検索結果だけで判断せず、その要件と照合して候補を選んでください。
 
 ## 型番で検索する
 
@@ -67,7 +67,7 @@ python3 -m digikey_tools --project projects/my_board search part TPS40210DGQR --
 - `product.parameter_map`
 - `product.availability`
 - `warnings`
-- `project.selection_criteria`
+- `project.selection_criteria`: `loaded` が `true` の場合はファイル由来、`false` の場合は現在の依頼文や関連文書の要件を使う
 
 ## 部品データをDBに保存・更新する
 
@@ -136,7 +136,7 @@ python3 -m digikey_tools --project projects/my_board bom add \
   --manufacturer-part TPS40210DGQR \
   --description "Boost controller" \
   --purpose "Nixie boost converter" \
-  --notes "selection_criteria.mdの電源条件を満たす" \
+  --notes "依頼文の電源条件を満たす" \
   --pretty
 ```
 
@@ -289,7 +289,7 @@ python3 -m unittest discover -s tests
 
 ## 判断時の注意
 
-- `warnings` が空でも、必ず `selection_criteria.md` の必須条件と照合する。
+- `warnings` が空でも、`selection_criteria.md`、現在の依頼文、または関連文書にある必須条件と照合する。
 - `status` が `Active` または `アクティブ` でも、在庫・Marketplace・最小注文数量を確認する。
 - `estimated_total_price` は送料、税、手数料を含まない。
 - `KeywordSearch` は候補探索用で、最終確認は `search part` または `bom price` のProductDetails結果で行う。

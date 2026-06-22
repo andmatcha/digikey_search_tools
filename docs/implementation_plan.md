@@ -31,7 +31,7 @@ digikey_search_tools/
     test_*.py
   projects/
     <project>/
-      selection_criteria.md
+      selection_criteria.md  # 任意
       bom/
         bom.csv
       data/
@@ -55,7 +55,7 @@ digikey_search_tools/
 - `.env` ローダ、JSON設定ローダ、Digi-Key APIクライアントを実装する。
 - ProductDetailsとKeywordSearchを呼び出せるようにする。
 - APIレスポンスをAI向けJSONへ正規化する。
-- 選定基準Markdownを毎回読み、出力メタデータへ含める。
+- 選定基準Markdownが存在する場合は読み、出力メタデータへ含める。存在しない場合もCLI操作は継続し、未読み込みであることをメタデータへ含める。
 
 ### 3. プロジェクト・BOM・保存
 
@@ -70,7 +70,7 @@ digikey_search_tools/
 ### 4. ドキュメント・テスト
 
 - AIエージェント向けの日本語利用手順書を作成する。
-- 選定基準Markdown雛形を作成する。
+- 任意利用の選定基準Markdown雛形を作成する。
 - 単体テストを追加する。
 - `python3 -m unittest` で検証する。
 - 最後に日本語コミットメッセージでコミット・プッシュする。
