@@ -1,0 +1,4 @@
+interface:
+  display_name: "Digi-Key Parts"
+  short_description: "Digi-Key search, BOM, and pricing workflow"
+  default_prompt: "Use $digikey-parts to select electronic parts and manage the Digi-Key BOM for this project."

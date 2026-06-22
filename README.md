@@ -30,6 +30,13 @@ DIGIKEY_ACCOUNT_ID=...
 - [実装計画書](docs/implementation_plan.md)
 - [AIエージェント向け利用手順](docs/agent_usage.md)
 
+## AIエージェント用スキル
+
+- Codex: `.agents/skills/digikey-parts/SKILL.md`
+- Claude Code: `.claude/skills/digikey-parts/SKILL.md`
+
+Codexでは `$digikey-parts`、Claude Codeでは `/digikey-parts` として呼び出せます。どちらも、このリポジトリのCLIを使ってDigi-Key検索、BOM編集、価格計算、ローカル部品DB更新を行うための薄い手順スキルです。
+
 ## テスト
 
 ```bash
