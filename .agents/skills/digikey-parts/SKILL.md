@@ -178,6 +178,21 @@ dktools library export-kicad \
   --pretty
 ```
 
+Create a placement-only KiCad project or schematic from BOM rows:
+
+- Before generating or editing `.kicad_sch`, read `references/kicad_bom_placement_workflow.md` from this skill.
+- Treat `bom_items` as the source of truth, expand every reference designator range, and verify expanded symbol count equals the BOM quantity sum.
+- Embed concrete symbol definitions in `.kicad_sch` under `(lib_symbols ...)` for every used `lib_id`; an empty or incomplete `lib_symbols` section causes KiCad to show red `??` placeholders.
+- Avoid KiCad alias/derived symbols whose library definition uses `(extends ...)` in generated placement schematics. Prefer the concrete base symbol when its pinout matches, preserve the exact MPN in `Value` and properties, and document the substitution.
+- Run the reusable validator after KiCad CLI checks:
+
+```bash
+python3 .agents/skills/digikey-parts/scripts/validate_kicad_placement.py \
+  kicad/<project>/<project>.kicad_sch \
+  --erc kicad/<project>/erc.rpt \
+  --svg /tmp/<project>.svg
+```
+
 Refresh local stored part data:
 
 ```bash
@@ -198,6 +213,8 @@ dktools store update <part-number> --refresh --pretty
 - Store library decisions at BOM-line granularity, not only by part number, because the same part number can need different footprints or verification in different contexts.
 - Prefer KiCad built-in generic symbols and footprints for resistors, capacitors, inductors, diodes, ferrite beads, fuses, and test points.
 - For ICs and semiconductors, prefer generic KiCad package footprints when suitable, but require part-specific symbol pin numbers, pin names, and pin electrical types. Use a pin-map CSV before exporting generated symbols.
+- For generated placement schematics, verify each KiCad symbol name exists in the installed `.kicad_sym` files instead of guessing names. For example, use `Device:D` for a generic diode rather than inventing `Device:D_Fast`.
+- When a KiCad standard symbol is only an alias or extends another symbol, use the concrete base symbol if the pin order and electrical meaning match. Record the original manufacturer part number in symbol properties and the decision docs.
 - Use `library list --needs-action` before KiCad work to find unassessed, unverified, download-needed, or custom-library-needed BOM rows.
 - Include the reason for a selected part in the BOM `Notes` or project docs.
 
@@ -208,3 +225,5 @@ Run local tests after changing this tool or its workflows:
 ```bash
 python3 -m unittest discover -s tests
 ```
+
+For generated KiCad placement projects, also run `kicad-cli sch upgrade`, `kicad-cli sch export svg`, `kicad-cli sch erc`, and `scripts/validate_kicad_placement.py`. With intentionally unwired schematics, unconnected or not-driven ERC messages are expected, but `lib_symbol_mismatch`, `endpoint_off_grid`, missing symbol/library errors, red `??`, or reference/value-only symbols are not acceptable.
