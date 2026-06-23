@@ -17,6 +17,8 @@ Use this reference when the task is to create a new KiCad project or `.kicad_sch
 - Verify symbol names against the installed KiCad `.kicad_sym` files. Do not invent names. For example, `Device:D` exists; `Device:D_Fast` may not.
 - Store decisions at BOM-line granularity, not just by manufacturer part number.
 - Preserve the exact manufacturer part number in `Value` and/or a custom property even when the schematic uses a generic or base KiCad symbol.
+- For detailed footprint selection, project-local `.pretty` handling, and PCB import, read `references/kicad_footprint_pcb_workflow.md`.
+- For post-generation functional block frames and symbol reorganization, read `references/kicad_function_block_layout_workflow.md`.
 
 ## Avoid Alias Rendering Failures
 
@@ -71,6 +73,8 @@ Write durable docs beside the generated KiCad project:
 
 - `docs/kicad_library_decisions.md`: every BOM line, selected symbol, selected footprint, status, confidence, and rationale.
 - `docs/kicad_library_gaps.md`: parts that need manual symbol, footprint, pinout, or mechanical verification.
+- `docs/kicad_footprint_audit.md`: footprint source, verification basis, project-local footprint list, and unresolved footprint count.
+- `docs/kicad_function_blocks.json` and/or `docs/kicad_function_blocks.md`: optional project-specific block grouping rules and placement summary.
 - `docs/pins.csv`: pin maps used for generated or part-specific symbols.
 
 ## Validation

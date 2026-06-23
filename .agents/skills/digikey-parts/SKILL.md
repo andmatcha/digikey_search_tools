@@ -1,6 +1,6 @@
 ---
 name: digikey-parts
-description: Use this skill when selecting electronic parts with Digi-Key, searching by part number or specs, checking status/stock/pricing, editing project-name keyed BOM records in SQLite, exporting Digi-Key upload CSVs, refreshing the local part store, or calculating BOM cost with the local digikey_search_tools Python CLI. Trigger for Digi-Key, BOM, electronic component selection, part replacement, price estimation, availability checks, and project selection_criteria.md workflows in this repository.
+description: Use this skill when selecting electronic parts with Digi-Key, searching by part number or specs, checking status/stock/pricing, editing project-name keyed BOM records in SQLite, exporting Digi-Key upload CSVs, refreshing the local part store, calculating BOM cost, deciding KiCad symbols/footprints, generating placement-only KiCad schematics, organizing KiCad schematics by functional block, or importing schematic footprints into a KiCad PCB with the local digikey_search_tools Python CLI. Trigger for Digi-Key, BOM, electronic component selection, part replacement, price estimation, availability checks, KiCad library/footprint assignment, KiCad functional block layout, KiCad PCB import, and project selection_criteria.md workflows in this repository.
 ---
 
 # Digi-Key Parts Workflow
@@ -193,6 +193,37 @@ python3 .agents/skills/digikey-parts/scripts/validate_kicad_placement.py \
   --svg /tmp/<project>.svg
 ```
 
+Organize a generated schematic by functional block:
+
+- Before moving schematic symbols into power/control/display frames or adding block rectangles/text, read `references/kicad_function_block_layout_workflow.md` from this skill.
+- Prefer project-specific block rules in `docs/kicad_function_blocks.json`; fall back to `bom_items.purpose` via `LineId` when available.
+- Keep all moved symbols and generated block graphics on the KiCad grid.
+
+```bash
+python3 .agents/skills/digikey-parts/scripts/organize_kicad_schematic_blocks.py \
+  --schematic kicad/<project>/<project>.kicad_sch \
+  --bom-db data/digikey/parts.sqlite3 \
+  --project-name <bom-project-name> \
+  --config docs/kicad_function_blocks.json \
+  --summary-md docs/kicad_function_blocks.md \
+  --in-place
+```
+
+Assign KiCad footprints and load schematic parts into the PCB editor:
+
+- Before assigning footprints, creating project-local `.pretty` files, or generating/updating `.kicad_pcb`, read `references/kicad_footprint_pcb_workflow.md` from this skill.
+- Resolve footprints in this order: KiCad standard footprint, Digi-Key/EDA model or saved payload hint, manufacturer drawing/datasheet, then project-local generated footprint.
+- Record every footprint decision with `dktools library assess`, write `docs/kicad_footprint_audit.md`, and keep unresolved or mechanically risky items in `docs/kicad_library_gaps.md`.
+- Run the PCB import script with KiCad's bundled Python, not system Python:
+
+```bash
+/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3 \
+  .agents/skills/digikey-parts/scripts/import_kicad_schematic_to_pcb.py \
+  --schematic kicad/<project>/<project>.kicad_sch \
+  --pcb kicad/<project>/<project>.kicad_pcb \
+  --replace
+```
+
 Refresh local stored part data:
 
 ```bash
@@ -212,6 +243,7 @@ dktools store update <part-number> --refresh --pretty
 - Treat SQLite `eda_library_assessments` as the source of truth for KiCad/EDA symbol, footprint, 3D model, Digi-Key model, and external-library readiness for each BOM `LineId`.
 - Store library decisions at BOM-line granularity, not only by part number, because the same part number can need different footprints or verification in different contexts.
 - Prefer KiCad built-in generic symbols and footprints for resistors, capacitors, inductors, diodes, ferrite beads, fuses, and test points.
+- Prefer KiCad standard footprints when dimensions and package style match; use project-local `.pretty` footprints only when standard libraries do not contain a suitable land pattern or a keyed/mechanical detail must be preserved.
 - For ICs and semiconductors, prefer generic KiCad package footprints when suitable, but require part-specific symbol pin numbers, pin names, and pin electrical types. Use a pin-map CSV before exporting generated symbols.
 - For generated placement schematics, verify each KiCad symbol name exists in the installed `.kicad_sym` files instead of guessing names. For example, use `Device:D` for a generic diode rather than inventing `Device:D_Fast`.
 - When a KiCad standard symbol is only an alias or extends another symbol, use the concrete base symbol if the pin order and electrical meaning match. Record the original manufacturer part number in symbol properties and the decision docs.
@@ -226,4 +258,6 @@ Run local tests after changing this tool or its workflows:
 python3 -m unittest discover -s tests
 ```
 
-For generated KiCad placement projects, also run `kicad-cli sch upgrade`, `kicad-cli sch export svg`, `kicad-cli sch erc`, and `scripts/validate_kicad_placement.py`. With intentionally unwired schematics, unconnected or not-driven ERC messages are expected, but `lib_symbol_mismatch`, `endpoint_off_grid`, missing symbol/library errors, red `??`, or reference/value-only symbols are not acceptable.
+For generated KiCad placement projects, also run `kicad-cli sch upgrade`, `kicad-cli sch export svg`, `kicad-cli sch erc`, and `scripts/validate_kicad_placement.py`. With intentionally unwired schematics, unconnected or not-driven ERC messages are expected, but `lib_symbol_mismatch`, `endpoint_off_grid`, missing symbol/library errors, red `??`, or reference/value-only symbols are not acceptable. Re-run these checks after functional block reorganization because block frames and moved symbols can introduce off-grid coordinates if edited incorrectly.
+
+For generated KiCad PCB imports, verify that every on-board schematic symbol with a non-empty `Footprint` property produced a PCB footprint, then run `kicad-cli pcb export svg` or `kicad-cli pcb drc` when a board-level check is useful. A placement-only schematic can produce footprints without nets; missing ratsnest connections are expected until the schematic is wired.

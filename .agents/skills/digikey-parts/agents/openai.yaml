@@ -1,4 +1,4 @@
 interface:
   display_name: "Digi-Key Parts"
-  short_description: "Digi-Key search, BOM, and pricing workflow"
-  default_prompt: "Use $digikey-parts to select electronic parts and manage the Digi-Key BOM for this project."
+  short_description: "Digi-Key BOM and KiCad library workflow"
+  default_prompt: "Use $digikey-parts to select electronic parts, manage the BOM, and prepare organized KiCad schematics, footprints, or PCB imports."
